@@ -53,9 +53,8 @@ export const DockerService = {
     const internalPort = appType === 'vite' ? VITE_INTERNAL_PORT : DEFAULT_INTERNAL_PORT;
 
     try {
-      // 1. Stop any existing container for this project
+      // Build before stopping the live container so image failures don't cause downtime.
       await LogService.stream(buildId, 'Preparing container environment...', 'info');
-      await ensureContainerStopped(projectId);
 
       // 2. Build the Docker image
       await LogService.stream(buildId, 'Building Docker image...', 'info');
@@ -74,6 +73,7 @@ export const DockerService = {
       }
 
       // 3. Run the container
+      await ensureContainerStopped(projectId);
       await LogService.stream(buildId, 'Starting container...', 'info');
       const config: ContainerConfig = {
         projectId,
@@ -99,7 +99,7 @@ export const DockerService = {
 
       // 4. Health check
       await LogService.stream(buildId, 'Performing health check...', 'info');
-      const healthy = await this.waitForHealthy(hostPort, 15000);
+      const healthy = await this.waitForHealthy(hostPort, 15000, appType === 'vite');
 
       if (!healthy) {
         const logs = await getContainerLogs(containerName, 50);
@@ -198,14 +198,21 @@ export const DockerService = {
   /**
    * Wait for container to become healthy (respond to HTTP).
    */
-  async waitForHealthy(port: number, timeoutMs: number = 10000): Promise<boolean> {
+  async waitForHealthy(
+    port: number,
+    timeoutMs: number = 10000,
+    requireSuccess = false,
+  ): Promise<boolean> {
     const start = Date.now();
     const interval = 500;
 
     while (Date.now() - start < timeoutMs) {
       try {
-        const res = await fetch(`http://localhost:${port}`);
-        if (res.ok || res.status < 500) {
+        const res = await fetch(`http://127.0.0.1:${port}/`, {
+          signal: AbortSignal.timeout(1000),
+        });
+        await res.body?.cancel();
+        if (res.ok || (!requireSuccess && res.status < 500)) {
           return true;
         }
       } catch {

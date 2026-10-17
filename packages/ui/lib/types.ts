@@ -16,7 +16,29 @@ export interface Project {
   auto_deploy: boolean;
   created_at: string;
   updated_at: string;
+  latest_build?: Pick<Build, 'id' | 'status' | 'created_at' | 'completed_at'> | null;
+  latest_deployment?: {
+    id: string;
+    build_id: string;
+    status: DeploymentStatus;
+    status_message: string | null;
+    activated_at: string;
+  } | null;
 }
+
+export type DeploymentStatus =
+  | 'pending'
+  | 'dns_creating'
+  | 'dns_created'
+  | 'ssl_issuing'
+  | 'ssl_issued'
+  | 'nginx_configuring'
+  | 'nginx_configured'
+  | 'app_starting'
+  | 'health_checking'
+  | 'active'
+  | 'inactive'
+  | 'failed';
 
 export interface Build {
   id: string;

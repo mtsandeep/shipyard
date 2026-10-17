@@ -1,4 +1,5 @@
-import { join } from 'path';
+import { extname, join, resolve, sep } from 'path';
+import { getStaticDirectory } from './services/static-site';
 
 const [dir, portStr] = process.argv.slice(2);
 
@@ -8,38 +9,53 @@ if (!dir || !portStr) {
 }
 
 const port = parseInt(portStr, 10);
-const baseDir = dir;
+const baseDir = getStaticDirectory(dir, '.');
 
 console.log(`Starting static server for ${baseDir} on port ${port}`);
 
 Bun.serve({
   port,
   async fetch(req) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
+    }
     const url = new URL(req.url);
-    let filePath = url.pathname;
+    let filePath: string;
+    try {
+      filePath = decodeURIComponent(url.pathname);
+    } catch {
+      return new Response('Bad Request', { status: 400 });
+    }
 
     // Default to index.html for root
     if (filePath === '/' || filePath === '') {
       filePath = '/index.html';
     }
 
-    const fullPath = join(baseDir, filePath);
+    const fullPath = resolve(baseDir, `.${filePath}`);
+    if (!fullPath.startsWith(baseDir + sep) || filePath.includes('\0')) {
+      return new Response('Not Found', { status: 404 });
+    }
     const file = Bun.file(fullPath);
 
     // Try to serve file
     if (await file.exists()) {
-      return new Response(file);
+      return new Response(req.method === 'HEAD' ? null : file, {
+        headers: {
+          'Content-Type': file.type,
+          ...(filePath.endsWith('/index.html') ? { 'Cache-Control': 'no-cache' } : {}),
+        },
+      });
     }
 
-    // SPA Fallback: Serve index.html if file not found (and does not look like api/asset)
-    // Simple heuristic: if it doesn't have an extension, try index.html?
-    // Or simpler: Just Always try index.html if 404?
-    // Standard SPA fallback:
-    if (!filePath.startsWith('/api') && !filePath.includes('.')) {
-      // Try index.html
+    const assetExtensions =
+      /\.(?:js|mjs|css|map|json|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|wasm|txt|xml|webmanifest)$/i;
+    if (!filePath.startsWith('/assets/') && !assetExtensions.test(extname(filePath))) {
       const index = Bun.file(join(baseDir, 'index.html'));
       if (await index.exists()) {
-        return new Response(index);
+        return new Response(req.method === 'HEAD' ? null : index, {
+          headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' },
+        });
       }
     }
 

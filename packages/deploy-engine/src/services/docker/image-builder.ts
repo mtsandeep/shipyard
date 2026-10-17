@@ -3,6 +3,7 @@ import { writeFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { execDocker, execDockerWithStream } from './exec';
 import { BuildResult, getImageName } from './types';
+import { getStaticDirectory, staticSiteLocations } from '../static-site';
 
 /**
  * Dockerfile template types
@@ -130,8 +131,11 @@ function getDockerfileContent(
     case 'vite':
       // Static sites use nginx:alpine (smallest)
       return `FROM nginx:alpine
+RUN rm -rf /usr/share/nginx/html/*
 COPY dist/ /usr/share/nginx/html
-EXPOSE 80
+COPY .shipyard-nginx.conf /etc/nginx/conf.d/default.conf
+RUN nginx -t
+EXPOSE ${internalPort}
 CMD ["nginx", "-g", "daemon off;"]`;
 
     case 'go':
@@ -195,7 +199,10 @@ export async function buildImage(
   onLog?: (message: string) => void,
 ): Promise<BuildResult> {
   const imageName = getImageName(projectId, buildId);
-  const dockerfilePath = join(sourceDir, 'Dockerfile');
+  const dockerfilePath = join(
+    sourceDir,
+    framework === 'vite' ? '.shipyard.Dockerfile' : 'Dockerfile',
+  );
   let dockerfileGenerated = false;
 
   // Check if source directory exists
@@ -207,8 +214,26 @@ export async function buildImage(
     };
   }
 
+  if (framework === 'vite') {
+    try {
+      getStaticDirectory(sourceDir);
+    } catch (error) {
+      return {
+        success: false,
+        imageName,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    // Vite artifacts are always served statically, even when the repository has a
+    // development Dockerfile that runs Bun or `vite preview` on a different port.
+    await writeFile(
+      join(sourceDir, '.shipyard-nginx.conf'),
+      `server {\nlisten ${internalPort};\nroot /usr/share/nginx/html;\n${staticSiteLocations()}\n}\n`,
+    );
+  }
+
   // Use existing Dockerfile if present, otherwise generate one
-  if (existsSync(dockerfilePath)) {
+  if (framework !== 'vite' && existsSync(dockerfilePath)) {
     // Sanitize existing Dockerfile for security
     const originalContent = readFileSync(dockerfilePath, 'utf-8');
     const sanitizedContent = sanitizeDockerfile(originalContent, internalPort);
@@ -223,7 +248,9 @@ export async function buildImage(
     // Detect entry point: use start script if available, otherwise find entry file.
     // Go projects are compiled by the generated Dockerfile, so skip entry detection.
     let entryFile: string | undefined;
-    if (framework === 'go') {
+    if (framework === 'vite') {
+      onLog?.('Serving built Vite files with Nginx (no application runtime)');
+    } else if (framework === 'go') {
       onLog?.(`Go project detected - compiling binary inside the image`);
     } else if (!hasStartScript(sourceDir)) {
       entryFile = detectEntryFile(sourceDir) || undefined;
@@ -243,14 +270,19 @@ export async function buildImage(
   // Build the image (uses layer caching - bun install is cached if package.json unchanged)
   onLog?.(`Building Docker image: ${imageName}`);
 
-  const result = await execDockerWithStream(['build', '-t', imageName, sourceDir], (line) =>
-    onLog?.(line),
-  );
-
-  // Cleanup generated Dockerfile
-  if (existsSync(dockerfilePath)) {
-    await unlink(dockerfilePath).catch(() => {});
-  }
+  const result = await (async () => {
+    try {
+      return await execDockerWithStream(
+        ['build', '-f', dockerfilePath, '-t', imageName, sourceDir],
+        (line) => onLog?.(line),
+      );
+    } finally {
+      if (dockerfileGenerated) await unlink(dockerfilePath).catch(() => {});
+      if (framework === 'vite') {
+        await unlink(join(sourceDir, '.shipyard-nginx.conf')).catch(() => {});
+      }
+    }
+  })();
 
   if (result.exitCode !== 0) {
     return {

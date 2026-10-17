@@ -82,6 +82,25 @@ describe('Deploy Engine builder (in-place build)', () => {
     expect((Builder.runCommand as any).mock.calls.length).toBe(callsBefore);
   });
 
+  it('fails a Vite build command that does not produce dist/index.html', async () => {
+    await expect(
+      Builder.execute({
+        build_id: 'vite-without-output',
+        project_id: 'project-test-1',
+        github_url: 'https://github.com/test/repo.git',
+        build_command: 'bun run build',
+        root_directory: './',
+        app_type: 'vite',
+        env_vars: {},
+      }),
+    ).rejects.toThrow('Static build output missing');
+    expect(
+      existsSync(
+        join(TEST_BASE_DIR, 'project-test-1', 'builds', 'vite-without-output', 'extracted'),
+      ),
+    ).toBe(false);
+  });
+
   afterAll(() => {
     rmSync(TEST_BASE_DIR, { recursive: true, force: true });
   });

@@ -38,6 +38,7 @@ export const DeploymentService = {
             status: 'pending',
             status_message: 'Preparing deployment...',
             failed_at_step: null,
+            activated_at: new Date(),
           })
           .where(eq(deployments.id, existingDeployment.id));
 

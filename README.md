@@ -30,6 +30,26 @@ Uptime email alerts use the Resend API. Configure `RESEND_API_KEY` and `RESEND_F
 - **Process Management**: pm0 (PM2-compatible) for non-Docker deployments; optional Docker mode via `USE_DOCKER=true`
 - **Proxy**: Nginx
 
+### Vite deployments
+
+Vite apps are built with the configured build command (normally `bun run build`).
+The app directory, including a configured monorepo root directory, must contain
+`dist/index.html` after the build. A missing output fails the build and activation.
+
+In production, Nginx serves these files directly through a loopback listener on the
+project's assigned port; Vite does not need a Bun app process or `vite preview`.
+The existing domain, HTTPS, and dashboard preview routes proxy to that listener.
+Docker mode uses an Nginx static image with the same SPA routing rules, rather than
+the repository's runtime Dockerfile. Local development uses a small Bun static
+server, which is also included in the deploy engine's compiled output.
+
+Browser-history routes fall back to `index.html`, missing bundles return 404, and
+HTML is revalidated so browsers pick up new deployments. Static activation requires
+a successful HTTP response, and domain configuration failures fail deployment.
+The Nginx worker must have read/traverse access to the deployed `dist` directory
+and its parent directories (the default `/var/lib/shipyard/apps` location is intended
+for this). An unreadable output fails the activation health check.
+
 ## Getting Started
 
 To start the development environment with all services:

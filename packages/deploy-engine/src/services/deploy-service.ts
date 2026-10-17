@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from 'fs';
-import { rm, unlink } from 'fs/promises';
+import { rm, unlink, symlink, rename } from 'fs/promises';
 import { basename, join } from 'path';
 import {
   AppType,
@@ -14,6 +14,7 @@ import { DockerService } from './docker';
 import { PM0Service } from './pm0';
 import { isWorkspaceRoot } from '../utils/workspace';
 import { ARTIFACTS_DIR, BASE_DIR, getBuildExtractDir, getProjectDir } from '../config/paths';
+import { getStaticDirectory } from './static-site';
 
 const IS_PLATFORM_PROD = process.env.PLATFORM_ENV === 'production';
 
@@ -119,18 +120,6 @@ export const DeployService = {
       }
     }
 
-    // Step 3: Update symlink for tracking
-    await LogService.step(buildId, 'Updating deployment symlinks');
-    try {
-      await retry(() => this.updateSymlink(paths.projectDir, effectiveExtractDir, buildId), {
-        name: 'symlink update',
-      });
-      await LogService.detail(buildId, 'Symlinks updated');
-    } catch (e: any) {
-      await LogService.error(buildId, `Failed to update symlinks: ${e.message}`);
-      throw e;
-    }
-
     // Resolve app directory if monorepo / subfolder deployment
     const isMonorepo = Boolean(
       rootDirectory &&
@@ -142,6 +131,9 @@ export const DeployService = {
       ? join(effectiveExtractDir, rootDirectory!)
       : effectiveExtractDir;
 
+    // Validate before stopping the live deployment or changing any routing.
+    const staticDir = appType === 'vite' ? getStaticDirectory(effectiveAppDir) : null;
+
     if (isMonorepo) {
       await LogService.detail(
         buildId,
@@ -149,8 +141,43 @@ export const DeployService = {
       );
     }
 
+    let domainConfigured = false;
+    const configureDomain = async () => {
+      if (!IS_PLATFORM_PROD) return;
+      await LogService.step(buildId, 'Configuring domain routing');
+      await LogService.detail(buildId, `Subdomain: ${subdomain}`);
+      try {
+        await retry(() => NginxService.createConfig(subdomain, port), {
+          name: `nginx config ${subdomain}`,
+          timeoutMs: 6000,
+        });
+        domainConfigured = true;
+        await LogService.success(buildId, 'Domain configured successfully');
+      } catch (e: any) {
+        await LogService.error(buildId, `Domain configuration failed: ${e.message}`);
+        throw e;
+      }
+    };
+
     // Step 4: Start application (Docker or direct)
-    if (USE_DOCKER) {
+    if (staticDir && IS_PLATFORM_PROD && !USE_DOCKER) {
+      await LogService.step(buildId, 'Serving Vite build as static files with Nginx');
+      // An existing Nginx listener is reloaded in place; no process restart is needed.
+      if (!NginxService.hasStaticConfig(projectId)) {
+        await this.killProjectProcess(projectId, port);
+      }
+      await NginxService.createStaticConfig(projectId, staticDir, port, async () => {
+        await this.performHealthCheck(
+          port,
+          buildId,
+          true,
+          await Bun.file(join(staticDir, 'index.html')).text(),
+        );
+        // Keep routing inside the transaction so a failure restores the old static root.
+        await configureDomain();
+      });
+    } else if (USE_DOCKER) {
+      if (IS_PLATFORM_PROD) await NginxService.removeStaticConfig(projectId);
       await LogService.step(buildId, 'Starting containerized deployment');
       await LogService.detail(buildId, 'Using Docker for isolation');
 
@@ -175,6 +202,7 @@ export const DeployService = {
 
       // Stop any existing process
       await LogService.detail(buildId, 'Stopping previous deployment if exists');
+      if (IS_PLATFORM_PROD) await NginxService.removeStaticConfig(projectId);
       await this.killProjectProcess(projectId, port);
 
       // Start the application
@@ -193,20 +221,12 @@ export const DeployService = {
     }
 
     // Step 5: Configure domain (production only)
-    if (IS_PLATFORM_PROD) {
-      await LogService.step(buildId, 'Configuring domain routing');
-      await LogService.detail(buildId, `Subdomain: ${subdomain}`);
-      try {
-        await retry(() => NginxService.createConfig(subdomain, port), {
-          name: `nginx config ${subdomain}`,
-          timeoutMs: 6000,
-        });
-        await LogService.success(buildId, 'Domain configured successfully');
-      } catch (e: any) {
-        await LogService.warning(buildId, `Domain configuration warning: ${e.message}`);
-        // Don't fail deployment for nginx issues
-      }
-    }
+    if (!domainConfigured) await configureDomain();
+
+    // Only track a build as current after serving and domain configuration succeed.
+    await retry(() => this.updateSymlink(paths.projectDir, effectiveExtractDir, buildId), {
+      name: 'symlink update',
+    });
 
     // Final success
     await LogService.step(buildId, 'Deployment complete');
@@ -221,6 +241,7 @@ export const DeployService = {
     }
 
     if (projectId) {
+      if (IS_PLATFORM_PROD) await NginxService.removeStaticConfig(projectId);
       if (USE_DOCKER) {
         if (buildId) await LogService.detail(buildId, 'Stopping Docker container');
         await DockerService.stop(projectId, buildId);
@@ -239,6 +260,7 @@ export const DeployService = {
   },
 
   async deleteProject(projectId: string, port?: number, subdomain?: string, buildIds?: string[]) {
+    if (IS_PLATFORM_PROD) await NginxService.removeStaticConfig(projectId);
     // Stop and cleanup Docker resources
     if (USE_DOCKER) {
       await DockerService.cleanup(projectId, buildIds);
@@ -346,9 +368,13 @@ export const DeployService = {
     const temp = join(projectDir, `.current_tmp_${Date.now()}`);
     const idFile = join(projectDir, 'current_build_id');
 
-    await Bun.write(idFile, buildId);
-    await Bun.spawn(['ln', '-sf', target, temp]).exited;
-    await Bun.spawn(['mv', '-Tf', temp, current]).exited;
+    try {
+      await symlink(target, temp);
+      await rename(temp, current);
+      await Bun.write(idFile, buildId);
+    } finally {
+      await unlink(temp).catch(() => {});
+    }
   },
 
   async killProjectProcess(projectId: string, port: number) {
@@ -399,8 +425,11 @@ export const DeployService = {
       if (buildId) {
         await LogService.detail(buildId, 'Detected static site - using static file server');
       }
-      const serverScript = join(process.cwd(), 'src', 'static-server.ts');
-      const distDir = join(cwd, appType === 'nextjs' ? 'out' : 'dist');
+      const bundledServer = join(import.meta.dir, 'static-server.js');
+      const serverScript = existsSync(bundledServer)
+        ? bundledServer
+        : join(import.meta.dir, '..', 'static-server.ts');
+      const distDir = getStaticDirectory(cwd, appType === 'nextjs' ? 'out' : 'dist');
       startCmd = ['bun', 'run', serverScript, distDir, port.toString()];
       workingDir = process.cwd();
     } else {
@@ -471,7 +500,7 @@ export const DeployService = {
     }
 
     try {
-      await this.performHealthCheck(port, buildId);
+      await this.performHealthCheck(port, buildId, useStaticServer);
       console.log(`[DeployService] Health check completed successfully for port ${port}`);
       if (buildId) {
         await LogService.success(buildId, 'Health check passed - application is responding');
@@ -563,7 +592,12 @@ export const DeployService = {
     console.log(`[DeployService] Dependencies installed successfully`);
   },
 
-  async performHealthCheck(port: number, buildId?: string) {
+  async performHealthCheck(
+    port: number,
+    buildId?: string,
+    requireSuccess = false,
+    expectedBody?: string,
+  ) {
     console.log(`[DeployService] Waiting for health check on port ${port}...`);
 
     const maxWaitMs = 15000; // 15 seconds wait time
@@ -574,9 +608,13 @@ export const DeployService = {
     while (Date.now() < deadline) {
       attempts++;
       try {
-        const res = await fetch(`http://localhost:${port}`);
+        const res = await fetch(`http://127.0.0.1:${port}/`, {
+          signal: AbortSignal.timeout(1000),
+        });
+        const matchesBuild = expectedBody === undefined || (await res.text()) === expectedBody;
+        if (expectedBody === undefined) await res.body?.cancel();
         console.log(`[DeployService] Health check response: ${res.status}`);
-        if (res.ok || res.status < 500) {
+        if (matchesBuild && (res.ok || (!requireSuccess && res.status < 500))) {
           console.log(`[DeployService] Health check passed after ${attempts} attempts.`);
           return;
         }

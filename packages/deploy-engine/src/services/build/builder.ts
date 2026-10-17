@@ -8,6 +8,7 @@ import { isWorkspaceRoot } from '../../utils/workspace';
 import { GitService } from './git-service';
 import { WorkerGitHubService } from './github-service';
 import { LogStreamer } from './log-streamer';
+import { getStaticDirectory } from '../static-site';
 
 /**
  * Build job payload. Must stay in sync with control-api's BuildJobData
@@ -60,6 +61,9 @@ export const Builder = {
 
       // Idempotency guard: never rebuild output that already completed.
       if (existsSync(sentinelPath)) {
+        if (job.app_type === 'vite') {
+          getStaticDirectory(join(buildDir, job.root_directory || '.'));
+        }
         await LogStreamer.stream(
           job.build_id,
           job.project_id,
@@ -67,6 +71,7 @@ export const Builder = {
           'info',
         );
         await LogStreamer.ensureFlushed(job.build_id);
+        await updateStatus('success');
         return;
       }
 
@@ -234,6 +239,8 @@ export const Builder = {
           'success',
         );
       }
+
+      if (job.app_type === 'vite') getStaticDirectory(projectDir);
 
       // 5. Drop git metadata (not needed at runtime) and mark the build complete
       await rm(join(buildDir, '.git'), { recursive: true, force: true }).catch(() => {});

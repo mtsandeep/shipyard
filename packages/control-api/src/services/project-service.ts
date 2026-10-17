@@ -1,11 +1,59 @@
 import { db } from '../db';
-import { projects, uptimeMonitors } from '../db/schema';
-import { and, eq } from 'drizzle-orm';
+import { builds, deployments, projects, uptimeMonitors } from '../db/schema';
+import { and, desc, eq, getTableColumns, sql } from 'drizzle-orm';
 import { AppType } from '../config/framework-config';
 
 export const ProjectService = {
   async getAll(ownerId: string) {
-    return await db.select().from(projects).where(eq(projects.owner_id, ownerId));
+    // Return only the latest attempt per project, without fetching full build logs
+    // or making one extra API/database request for every overview card.
+    const latestBuild = db
+      .select({
+        id: builds.id,
+        status: builds.status,
+        created_at: builds.created_at,
+        completed_at: builds.completed_at,
+      })
+      .from(builds)
+      .where(eq(builds.project_id, projects.id))
+      .orderBy(desc(builds.created_at), desc(builds.id))
+      .limit(1)
+      .as('latest_build');
+    const latestDeployment = db
+      .select({
+        id: deployments.id,
+        build_id: deployments.build_id,
+        status: deployments.status,
+        status_message: deployments.status_message,
+        activated_at: deployments.activated_at,
+      })
+      .from(deployments)
+      .where(eq(deployments.project_id, projects.id))
+      .orderBy(desc(deployments.activated_at), desc(deployments.id))
+      .limit(1)
+      .as('latest_deployment');
+
+    return await db
+      .select({
+        ...getTableColumns(projects),
+        latest_build: {
+          id: latestBuild.id,
+          status: latestBuild.status,
+          created_at: latestBuild.created_at,
+          completed_at: latestBuild.completed_at,
+        },
+        latest_deployment: {
+          id: latestDeployment.id,
+          build_id: latestDeployment.build_id,
+          status: latestDeployment.status,
+          status_message: latestDeployment.status_message,
+          activated_at: latestDeployment.activated_at,
+        },
+      })
+      .from(projects)
+      .leftJoinLateral(latestBuild, sql`true`)
+      .leftJoinLateral(latestDeployment, sql`true`)
+      .where(eq(projects.owner_id, ownerId));
   },
 
   async getById(id: string) {

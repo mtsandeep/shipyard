@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CardShell } from '@/components/ui/card-shell';
 import { Project } from '@/lib/types';
+import { getProjectStatus } from '@/lib/project-status';
 import { cn } from '@/lib/utils';
 import { ExternalLink, GitBranch } from 'lucide-react';
 import Link from 'next/link';
@@ -90,7 +91,13 @@ const FrameworkIcon = ({ type, className }: { type: string; className?: string }
 };
 
 export function ProjectCard({ project }: { project: Project }) {
-  const isReady = !!project.domain;
+  const status = getProjectStatus(project);
+  const statusColor = {
+    success: 'bg-emerald-500',
+    error: 'bg-red-500',
+    progress: 'bg-amber-500',
+    neutral: 'bg-zinc-500',
+  }[status.tone];
   const [faviconError, setFaviconError] = useState(false);
 
   const domainHostname = getDomainHostname(project.domain);
@@ -158,25 +165,34 @@ export function ProjectCard({ project }: { project: Project }) {
 
           {/* Status & Git Info */}
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-2 text-xs" title={status.detail}>
               <span className={cn('relative flex h-2 w-2')}>
+                {status.tone === 'progress' && (
+                  <span
+                    className={cn(
+                      'animate-ping absolute inline-flex h-full w-full rounded-full opacity-75',
+                      statusColor,
+                    )}
+                  />
+                )}
                 <span
-                  className={cn(
-                    'animate-ping absolute inline-flex h-full w-full rounded-full opacity-75',
-                    isReady ? 'bg-emerald-400' : 'bg-amber-400',
-                  )}
-                ></span>
-                <span
-                  className={cn(
-                    'relative inline-flex rounded-full h-2 w-2',
-                    isReady ? 'bg-emerald-500' : 'bg-amber-500',
-                  )}
+                  className={cn('relative inline-flex rounded-full h-2 w-2', statusColor)}
                 ></span>
               </span>
-              <span className="font-medium text-foreground">{isReady ? 'Ready' : 'Building'}</span>
+              <span className="font-medium text-foreground">{status.label}</span>
 
-              <span className="text-muted-foreground mx-1">•</span>
-              <span className="text-muted-foreground">{timeAgo(new Date(project.created_at))}</span>
+              {status.timestamp && (
+                <>
+                  <span className="text-muted-foreground mx-1">•</span>
+                  <time
+                    className="text-muted-foreground"
+                    dateTime={status.timestamp}
+                    title={new Date(status.timestamp).toLocaleString()}
+                  >
+                    {timeAgo(new Date(status.timestamp))}
+                  </time>
+                </>
+              )}
             </div>
 
             <div className="flex items-center gap-2 text-xs text-muted-foreground">

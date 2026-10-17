@@ -7,18 +7,42 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Plus, Search, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import type { Project } from '@/lib/types';
 
 export default function Home() {
-  const [projects, setProjects] = useState<any[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api
-      .getProjects()
-      .then(setProjects)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    let disposed = false;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const latest = await api.getProjects();
+        if (!disposed) setProjects(latest);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        refreshing = false;
+        if (!disposed) setLoading(false);
+      }
+    };
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    void refresh();
+    const interval = window.setInterval(refreshVisible, 5000);
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
   }, []);
 
   const filteredProjects = projects.filter((project) =>

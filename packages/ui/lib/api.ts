@@ -4,7 +4,7 @@ import { Project, Build, Deployment, EnvVar, LogEntry, UptimeSettings } from '@/
 
 export const api = {
   getProjects: async (): Promise<Project[]> => {
-    const res = await fetch(`${API_URL}/projects`, { credentials: 'include' });
+    const res = await fetch(`${API_URL}/projects`, { credentials: 'include', cache: 'no-store' });
     if (!res.ok) {
       const error = await res.json().catch(() => ({ error: 'Failed to fetch projects' }));
       throw new Error(error.error || error.message || 'Failed to fetch projects');

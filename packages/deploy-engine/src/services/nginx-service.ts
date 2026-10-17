@@ -1,9 +1,22 @@
 import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
+import { staticSiteLocations } from './static-site';
 
 const BASE_DOMAIN = process.env.BASE_DOMAIN || 'thakur.dev';
 const CERTBOT_WEBROOT = process.env.CERTBOT_WEBROOT || '/var/www/certbot';
 const DASHBOARD_ORIGIN = process.env.DASHBOARD_ORIGIN || `https://deploy.${BASE_DOMAIN}`;
+
+async function runChecked(command: string[]) {
+  const proc = Bun.spawn(command, { stdout: 'pipe', stderr: 'pipe' });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(`${command.join(' ')} failed: ${stderr.trim() || stdout.trim()}`);
+  }
+}
 
 function getNginxDirs(): { available: string; enabled: string } {
   // If explicitly configured and not default platform-sites
@@ -25,22 +38,22 @@ function getNginxDirs(): { available: string; enabled: string } {
   return { available: '/etc/nginx/sites-available', enabled: '/etc/nginx/sites-enabled' };
 }
 
-async function writeNginxFile(targetPath: string, content: string): Promise<void> {
+async function writeNginxFile(
+  targetPath: string,
+  content: string,
+  needsCertbot = true,
+): Promise<void> {
   const dir = dirname(targetPath);
   if (!existsSync(dir)) {
-    const mkdir = Bun.spawn(['sudo', 'mkdir', '-p', dir]);
-    await mkdir.exited;
-    const chown = Bun.spawn(['sudo', 'chmod', '755', dir]);
-    await chown.exited;
+    await runChecked(['sudo', 'mkdir', '-p', dir]);
+    await runChecked(['sudo', 'chmod', '755', dir]);
   }
 
   // Ensure CERTBOT_WEBROOT exists and is readable by Nginx
-  if (!existsSync(CERTBOT_WEBROOT)) {
-    const mkWebroot = Bun.spawn(['sudo', 'mkdir', '-p', CERTBOT_WEBROOT]);
-    await mkWebroot.exited;
+  if (needsCertbot && !existsSync(CERTBOT_WEBROOT)) {
+    await runChecked(['sudo', 'mkdir', '-p', CERTBOT_WEBROOT]);
+    await runChecked(['sudo', 'chmod', '755', CERTBOT_WEBROOT]);
   }
-  const chWebroot = Bun.spawn(['sudo', 'chmod', '-R', '755', CERTBOT_WEBROOT]);
-  await chWebroot.exited;
 
   try {
     await Bun.write(targetPath, content);
@@ -48,10 +61,8 @@ async function writeNginxFile(targetPath: string, content: string): Promise<void
     // If direct write fails (e.g. permission denied), write to /tmp and move with sudo
     const tmpPath = `/tmp/nginx-${Date.now()}-${Math.random().toString(36).slice(2)}.conf`;
     await Bun.write(tmpPath, content);
-    const mv = Bun.spawn(['sudo', 'mv', tmpPath, targetPath]);
-    await mv.exited;
-    const chmod = Bun.spawn(['sudo', 'chmod', '644', targetPath]);
-    await chmod.exited;
+    await runChecked(['sudo', 'mv', tmpPath, targetPath]);
+    await runChecked(['sudo', 'chmod', '644', targetPath]);
   }
 }
 
@@ -59,17 +70,14 @@ async function linkNginxFile(available: string, enabled: string): Promise<void> 
   if (available === enabled) return;
   const enabledDir = dirname(enabled);
   if (!existsSync(enabledDir)) {
-    const mkdir = Bun.spawn(['sudo', 'mkdir', '-p', enabledDir]);
-    await mkdir.exited;
+    await runChecked(['sudo', 'mkdir', '-p', enabledDir]);
   }
-  const proc = Bun.spawn(['sudo', 'ln', '-sf', available, enabled]);
-  await proc.exited;
+  await runChecked(['sudo', 'ln', '-sf', available, enabled]);
 }
 
 async function removeNginxFile(filePath: string): Promise<void> {
   if (existsSync(filePath)) {
-    const proc = Bun.spawn(['sudo', 'rm', '-f', filePath]);
-    await proc.exited;
+    await runChecked(['sudo', 'rm', '-f', filePath]);
   }
 }
 
@@ -103,6 +111,67 @@ async function retry(fn: () => Promise<void>, retries = 3, delayMs = 300) {
 }
 
 export const NginxService = {
+  staticConfigPath(projectId: string) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) throw new Error('Invalid project ID');
+    // Keep runtime listeners separate from the public domain/SSL configuration.
+    return join(getNginxDirs().available, `shipyard-static-${projectId}.conf`);
+  },
+
+  generateStaticConfig(root: string, port: number) {
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+      throw new Error('Invalid static site port');
+    }
+    if (!root.startsWith('/') || /[\r\n\0"\\$]/.test(root)) {
+      throw new Error('Invalid static site directory');
+    }
+    return `server {
+    listen 127.0.0.1:${port};
+    server_name localhost;
+    root "${root}";
+${staticSiteLocations()}
+}
+`;
+  },
+
+  hasStaticConfig(projectId: string) {
+    return existsSync(this.staticConfigPath(projectId));
+  },
+
+  async createStaticConfig(
+    projectId: string,
+    root: string,
+    port: number,
+    verify?: () => Promise<void>,
+  ) {
+    const path = this.staticConfigPath(projectId);
+    const enabled = join(getNginxDirs().enabled, `shipyard-static-${projectId}.conf`);
+    const previous = existsSync(path) ? readFileSync(path, 'utf8') : null;
+    try {
+      await writeNginxFile(path, this.generateStaticConfig(root, port), false);
+      await linkNginxFile(path, enabled);
+      await this.reload();
+      await verify?.();
+    } catch (error) {
+      if (previous !== null) {
+        await writeNginxFile(path, previous, false);
+      } else {
+        await removeNginxFile(enabled);
+        if (path !== enabled) await removeNginxFile(path);
+      }
+      await this.reload();
+      throw error;
+    }
+  },
+
+  async removeStaticConfig(projectId: string) {
+    const path = this.staticConfigPath(projectId);
+    if (!existsSync(path)) return;
+    const enabled = join(getNginxDirs().enabled, `shipyard-static-${projectId}.conf`);
+    await removeNginxFile(enabled);
+    if (path !== enabled) await removeNginxFile(path);
+    await this.reload();
+  },
+
   isSubdomainAllowed(sub: string) {
     if (!sub) return false;
     const s = sub.toLowerCase().trim();
@@ -230,9 +299,22 @@ server {
     const availablePath = join(available, `${sub}.conf`);
     const enabledPath = join(enabled, `${sub}.conf`);
 
-    await writeNginxFile(availablePath, this.generateConfig(sub, port));
-    await linkNginxFile(availablePath, enabledPath);
-    await this.reload();
+    const previous = existsSync(availablePath) ? readFileSync(availablePath, 'utf8') : null;
+    try {
+      await writeNginxFile(availablePath, this.generateConfig(sub, port));
+      await linkNginxFile(availablePath, enabledPath);
+      await this.reload();
+    } catch (error) {
+      // A failed reload must not leave an invalid file blocking every later deploy.
+      if (previous !== null) {
+        await writeNginxFile(availablePath, previous);
+      } else {
+        await removeNginxFile(enabledPath);
+        if (availablePath !== enabledPath) await removeNginxFile(availablePath);
+      }
+      await this.reload();
+      throw error;
+    }
   },
 
   async ensurePreviewConfig(sub: string, port: number) {
