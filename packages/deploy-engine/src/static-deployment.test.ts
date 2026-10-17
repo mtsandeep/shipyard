@@ -5,6 +5,8 @@ import { DeployService } from './services/deploy-service';
 import { DockerService } from './services/docker';
 import { NginxService } from './services/nginx-service';
 import { getStaticDirectory } from './services/static-site';
+import { PM0Service } from './services/pm0';
+import { createServer } from 'net';
 
 describe('Vite static deployment', () => {
   let directory: string;
@@ -96,6 +98,75 @@ describe('Vite static deployment', () => {
       expect(await DockerService.waitForHealthy(server.port!, 1000)).toBe(true);
     } finally {
       server.stop(true);
+    }
+  });
+
+  test.each([403, 404])('reports the actual HTTP %s readiness failure', async (status) => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => new Response('not serving the build', { status, headers: { Server: 'nginx' } }),
+    });
+    try {
+      await expect(
+        DeployService.performHealthCheck(
+          server.port!,
+          undefined,
+          true,
+          '<html>new build</html>',
+          30,
+        ),
+      ).rejects.toThrow(`HTTP ${status} from nginx`);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('rejects HTTP 200 from a stale server and accepts the expected build', async () => {
+    let body = '<html>old build</html>';
+    const server = Bun.serve({ port: 0, fetch: () => new Response(body) });
+    try {
+      await expect(
+        DeployService.performHealthCheck(
+          server.port!,
+          undefined,
+          true,
+          '<html>new build</html>',
+          30,
+        ),
+      ).rejects.toThrow('response does not match');
+      body = '<html>new build</html>';
+      await DeployService.performHealthCheck(server.port!, undefined, true, body, 1000);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('detects a busy non-HTTP port without hanging on an HTTP request', async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, '0.0.0.0', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing test listener');
+    try {
+      await expect(DeployService.ensurePortFree(address.port, 30)).rejects.toThrow('still in use');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    await DeployService.ensurePortFree(address.port, 1000);
+  });
+
+  test('does not suppress a failed port handoff after attempting to stop pm0', async () => {
+    const stop = spyOn(PM0Service, 'delete').mockResolvedValue(false);
+    const portCheck = spyOn(DeployService, 'ensurePortFree').mockRejectedValue(
+      new Error('Port still in use'),
+    );
+    try {
+      await expect(DeployService.killProjectProcess('project-123', 5001)).rejects.toThrow(
+        'Port still in use',
+      );
+      expect(stop).toHaveBeenCalledWith('project-123');
+    } finally {
+      stop.mockRestore();
+      portCheck.mockRestore();
     }
   });
 

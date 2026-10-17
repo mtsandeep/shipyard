@@ -11,7 +11,13 @@ import { existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { execPm0 } from './exec';
-import { getProcessName, type PM0ProcessInfo } from './types';
+import {
+  getProcessName,
+  getProcessProjectId,
+  getProcessBuildId,
+  matchesProject,
+  type PM0ProcessInfo,
+} from './types';
 
 // Re-export types
 export { getProcessName } from './types';
@@ -27,11 +33,7 @@ export const PM0Service = {
 
     try {
       const processes: PM0ProcessInfo[] = JSON.parse(result.stdout);
-      const proc = processes.find(
-        (p: PM0ProcessInfo) =>
-          p.pm2_env?.DEPLOY_PROJECT_ID === projectId ||
-          p.name === `deploy-${projectId.slice(0, 8)}`,
-      );
+      const proc = processes.find((p) => matchesProject(p, projectId));
       if (proc) {
         return { name: proc.name, pm_id: proc.pm_id };
       }
@@ -169,10 +171,7 @@ export const PM0Service = {
     try {
       const processes: PM0ProcessInfo[] = JSON.parse(result.stdout);
       return processes.some(
-        (p: PM0ProcessInfo) =>
-          (p.pm2_env?.DEPLOY_PROJECT_ID === projectId ||
-            p.name === `deploy-${projectId.slice(0, 8)}`) &&
-          p.pm2_env?.status === 'online',
+        (p: PM0ProcessInfo) => matchesProject(p, projectId) && p.pm2_env?.status === 'online',
       );
     } catch {
       return false;
@@ -234,13 +233,12 @@ export const PM0Service = {
       const processes: PM0ProcessInfo[] = JSON.parse(result.stdout);
       return processes
         .filter(
-          (p: PM0ProcessInfo) =>
-            Boolean(p.pm2_env?.DEPLOY_PROJECT_ID) || p.name?.startsWith('deploy-'),
+          (p: PM0ProcessInfo) => Boolean(getProcessProjectId(p)) || p.name?.startsWith('deploy-'),
         )
         .map((p: PM0ProcessInfo) => ({
           name: p.name,
-          projectId: p.pm2_env?.DEPLOY_PROJECT_ID || '',
-          buildId: p.pm2_env?.DEPLOY_BUILD_ID || '',
+          projectId: getProcessProjectId(p) || '',
+          buildId: getProcessBuildId(p) || '',
           status: p.pm2_env?.status || 'unknown',
         }));
     } catch {

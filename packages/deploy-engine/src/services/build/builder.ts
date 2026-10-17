@@ -78,6 +78,7 @@ export const Builder = {
       // 1. Authenticate (only for projects connected through a GitHub App installation)
       let token: string | undefined;
       if (job.installation_id) {
+        const authStartedAt = performance.now();
         try {
           await LogStreamer.stream(
             job.build_id,
@@ -86,6 +87,12 @@ export const Builder = {
             'info',
           );
           token = await WorkerGitHubService.getInstallationToken(job.installation_id);
+          await LogStreamer.stream(
+            job.build_id,
+            job.project_id,
+            `GitHub authentication completed in ${((performance.now() - authStartedAt) / 1000).toFixed(1)}s\n`,
+            'info',
+          );
         } catch (e: any) {
           await LogStreamer.stream(
             job.build_id,
@@ -105,7 +112,9 @@ export const Builder = {
         'info',
       );
       await LogStreamer.stream(job.build_id, job.project_id, 'Cloning repository...\n', 'info');
-      await GitService.clone(job.github_url, buildDir, token);
+      await GitService.clone(job.github_url, buildDir, token, (message) => {
+        void LogStreamer.stream(job.build_id, job.project_id, `${message}\n`, 'info');
+      });
 
       const isMonorepo = Boolean(
         job.root_directory &&

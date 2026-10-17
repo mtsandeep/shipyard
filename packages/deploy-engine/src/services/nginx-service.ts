@@ -422,17 +422,8 @@ server {
 
   async reload() {
     await retry(async () => {
-      const test = Bun.spawn(['sudo', 'nginx', '-t']);
-      await test.exited;
-      if (test.exitCode !== 0) {
-        throw new Error('nginx config validation failed');
-      }
-
-      const reload = Bun.spawn(['sudo', 'systemctl', 'reload', 'nginx']);
-      await reload.exited;
-      if (reload.exitCode !== 0) {
-        throw new Error('nginx reload failed');
-      }
+      await runChecked(['sudo', 'nginx', '-t']);
+      await runChecked(['sudo', 'systemctl', 'reload', 'nginx']);
     });
   },
 };

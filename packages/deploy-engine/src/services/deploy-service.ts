@@ -15,6 +15,7 @@ import { PM0Service } from './pm0';
 import { isWorkspaceRoot } from '../utils/workspace';
 import { ARTIFACTS_DIR, BASE_DIR, getBuildExtractDir, getProjectDir } from '../config/paths';
 import { getStaticDirectory } from './static-site';
+import { isPortAvailable } from '../utils/port';
 
 const IS_PLATFORM_PROD = process.env.PLATFORM_ENV === 'production';
 
@@ -162,11 +163,15 @@ export const DeployService = {
     // Step 4: Start application (Docker or direct)
     if (staticDir && IS_PLATFORM_PROD && !USE_DOCKER) {
       await LogService.step(buildId, 'Serving Vite build as static files with Nginx');
+      await LogService.detail(buildId, `Static root: ${staticDir}`);
+      await LogService.detail(buildId, 'Removing legacy pm0 application process if present');
+      await PM0Service.delete(projectId);
       // An existing Nginx listener is reloaded in place; no process restart is needed.
       if (!NginxService.hasStaticConfig(projectId)) {
-        await this.killProjectProcess(projectId, port);
+        await this.ensurePortFree(port);
       }
       await NginxService.createStaticConfig(projectId, staticDir, port, async () => {
+        await LogService.step(buildId, 'Checking static site readiness');
         await this.performHealthCheck(
           port,
           buildId,
@@ -381,27 +386,22 @@ export const DeployService = {
     // Use PM0 to stop and delete the managed process
     await PM0Service.delete(projectId);
 
-    // Safety net: ensure port is actually freed after pm0 delete
-    try {
-      await this.ensurePortFree(port);
-    } catch {
-      // Port might already be free, that's fine
-    }
+    // A port still held by an old process is a deployment failure, not success.
+    await this.ensurePortFree(port);
   },
 
-  async ensurePortFree(port: number) {
-    const deadline = Date.now() + 5000;
+  async ensurePortFree(port: number, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
-      try {
-        await fetch(`http://localhost:${port}`);
-        await new Promise((r) => setTimeout(r, 300));
-      } catch {
-        return;
-      }
+      if (await isPortAvailable(port)) return;
+      await new Promise((r) => setTimeout(r, Math.min(300, Math.max(0, deadline - Date.now()))));
     }
 
-    throw new Error(`Port ${port} did not free in time`);
+    throw new Error(
+      `Port ${port} is still in use after stopping the previous deployment. ` +
+        'A legacy pm0 process or another service may still own the port; Nginx cannot take it over.',
+    );
   },
 
   async startApplication(
@@ -597,13 +597,16 @@ export const DeployService = {
     buildId?: string,
     requireSuccess = false,
     expectedBody?: string,
+    timeoutMs = 15000,
   ) {
     console.log(`[DeployService] Waiting for health check on port ${port}...`);
 
-    const maxWaitMs = 15000; // 15 seconds wait time
+    const maxWaitMs = timeoutMs;
     const intervalMs = 500;
     const deadline = Date.now() + maxWaitMs;
     let attempts = 0;
+    let lastResult = 'No response received';
+    let lastReportedResult = '';
 
     while (Date.now() < deadline) {
       attempts++;
@@ -613,23 +616,36 @@ export const DeployService = {
         });
         const matchesBuild = expectedBody === undefined || (await res.text()) === expectedBody;
         if (expectedBody === undefined) await res.body?.cancel();
+        lastResult = `HTTP ${res.status}${res.headers.get('server') ? ` from ${res.headers.get('server')}` : ''}`;
+        if (res.ok && !matchesBuild) {
+          lastResult +=
+            "; response does not match this build's index.html (an old process or stale Nginx config may be serving the port)";
+        } else if (res.status === 403) {
+          lastResult +=
+            '; check Nginx worker read/traverse permissions on the static root and parent directories';
+        } else if (res.status === 404) {
+          lastResult += '; the listener is not serving the expected static root/index.html';
+        }
         console.log(`[DeployService] Health check response: ${res.status}`);
         if (matchesBuild && (res.ok || (!requireSuccess && res.status < 500))) {
           console.log(`[DeployService] Health check passed after ${attempts} attempts.`);
           return;
         }
-      } catch {
-        // service not up yet - log every 5th attempt
-        if (attempts % 5 === 0 && buildId) {
-          await LogService.progress(buildId, `Still waiting... (attempt ${attempts})`);
-        }
+      } catch (error) {
+        lastResult = `Request failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      if (buildId && lastResult !== lastReportedResult) {
+        await LogService.progress(buildId, `Readiness probe on port ${port}: ${lastResult}`);
+        lastReportedResult = lastResult;
       }
 
-      await new Promise((r) => setTimeout(r, intervalMs));
+      await new Promise((r) =>
+        setTimeout(r, Math.min(intervalMs, Math.max(0, deadline - Date.now()))),
+      );
     }
 
     throw new Error(
-      `Health check failed: application did not become ready on port ${port} within ${maxWaitMs}ms`,
+      `Health check failed on http://127.0.0.1:${port}/ within ${maxWaitMs}ms. Last result: ${lastResult}`,
     );
   },
 };

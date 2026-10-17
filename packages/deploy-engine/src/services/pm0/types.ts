@@ -20,11 +20,27 @@ export interface PM0ProcessInfo {
     pm_uptime: number;
     restart_time: number;
     pm_cwd: string;
+    env?: Record<string, string>;
     PORT?: string;
     DEPLOY_PROJECT_ID?: string;
     DEPLOY_PROJECT_NAME?: string;
     DEPLOY_BUILD_ID?: string;
   };
+}
+
+/** pm0 nests child variables under env; older PM2-compatible outputs flatten them. */
+export function getProcessProjectId(process: PM0ProcessInfo): string | undefined {
+  return process.pm2_env?.env?.DEPLOY_PROJECT_ID || process.pm2_env?.DEPLOY_PROJECT_ID;
+}
+
+export function getProcessBuildId(process: PM0ProcessInfo): string | undefined {
+  return process.pm2_env?.env?.DEPLOY_BUILD_ID || process.pm2_env?.DEPLOY_BUILD_ID;
+}
+
+export function matchesProject(process: PM0ProcessInfo, projectId: string): boolean {
+  const owner = getProcessProjectId(process);
+  // Never let a legacy name override explicit ownership of another project.
+  return owner ? owner === projectId : process.name === `deploy-${projectId.slice(0, 8)}`;
 }
 
 /**
