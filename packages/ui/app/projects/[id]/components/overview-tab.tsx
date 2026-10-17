@@ -150,7 +150,13 @@ export function OverviewTab({
           </p>
           <div className="flex items-center gap-2 text-lg font-semibold">
             <Server className="h-4 w-4 text-muted-foreground" />
-            <span>{project.port ? `Port ${project.port}` : 'Auto assigned'}</span>
+            <span>
+              {project.app_type === 'vite'
+                ? 'Static hosting'
+                : project.port
+                  ? `Port ${project.port}`
+                  : 'Auto assigned'}
+            </span>
           </div>
           <p className="text-xs capitalize text-muted-foreground">{project.app_type}</p>
         </Card>

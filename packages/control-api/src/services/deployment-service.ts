@@ -6,6 +6,7 @@ import { EnvService } from './env-service';
 import { DomainService } from './domain-service';
 import { LogService } from './log-service';
 import { WebSocketService } from '../ws';
+import { isStaticFramework } from '../config/framework-config';
 
 const IS_PLATFORM_PROD =
   process.env.NODE_ENV === 'production' || process.env.PLATFORM_ENV === 'production';
@@ -18,7 +19,8 @@ export const DeploymentService = {
 
     if (!project) throw new Error('Project not found');
     // Ensure we don't proceed if port is missing
-    if (!project.port) throw new Error('Project has no assigned port');
+    const directStatic = isStaticFramework(project.app_type) && IS_PLATFORM_PROD;
+    if (!directStatic && !project.port) throw new Error('Project has no assigned port');
 
     // Fetch and decrypt environment variables for this project
     const envVarsObject = await EnvService.getAsRecord(projectId);
@@ -94,7 +96,7 @@ export const DeploymentService = {
           const result = await DomainService.provision(
             projectId,
             subdomain,
-            project.port,
+            directStatic ? null : project.port,
             async (step, message) => {
               // Map domain provisioning steps to deployment statuses
               await this.updateDeploymentStatus(deploymentId, step as DeploymentStatus, message);
@@ -219,7 +221,7 @@ export const DeploymentService = {
         body: JSON.stringify({
           projectId: project.id,
           buildId: buildId,
-          port: project.port,
+          port: directStatic ? null : project.port,
           appType: project.app_type,
           subdomain,
           rootDirectory: project.root_directory,
@@ -238,6 +240,9 @@ export const DeploymentService = {
       // ──────────────────────────────────────────────
       try {
         await db.transaction(async (tx) => {
+          if (directStatic) {
+            await tx.update(projects).set({ port: null }).where(eq(projects.id, projectId));
+          }
           // Mark all current active deployments for this project as inactive
           await tx
             .update(deployments)
@@ -313,8 +318,8 @@ export const DeploymentService = {
     const project = await db.query.projects.findFirst({
       where: eq(projects.id, projectId),
     });
-    if (!project || !project.port) {
-      throw new Error('Project or port not found');
+    if (!project || (!project.port && !isStaticFramework(project.app_type))) {
+      throw new Error('Project or runtime port not found');
     }
 
     // Call Deploy Engine
@@ -327,6 +332,8 @@ export const DeploymentService = {
         port: project.port,
         projectId,
         buildId: activeDeployment.build_id,
+        appType: project.app_type,
+        subdomain: project.domain?.split('.')[0],
       }),
     });
 

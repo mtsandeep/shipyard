@@ -30,7 +30,7 @@ export const DomainService = {
   async provision(
     projectId: string,
     subdomain: string,
-    port: number,
+    port: number | null,
     onStatus?: (step: string, message: string) => Promise<void>,
     buildId?: string,
   ): Promise<{
@@ -334,7 +334,7 @@ export const DomainService = {
    */
   async retry(
     projectId: string,
-    port: number,
+    port: number | null,
     onStatus?: (step: string, message: string) => Promise<void>,
   ) {
     const provision = await this.getByProjectId(projectId);

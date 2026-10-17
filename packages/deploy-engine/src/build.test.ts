@@ -1,37 +1,39 @@
-import { describe, it, expect, spyOn, mock, afterAll } from 'bun:test';
+import { describe, it, expect, spyOn, afterAll } from 'bun:test';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
 // Isolate the build directory and make control-api status calls fail fast.
+// Must happen before the dynamic imports below: paths.ts captures BASE_DIR at import time.
 const TEST_BASE_DIR = join(tmpdir(), `shipyard-build-test-${Date.now()}`);
 process.env.BASE_DIR = TEST_BASE_DIR;
 process.env.CONTROL_API_URL = 'http://127.0.0.1:9';
 
-// Mock git + log modules BEFORE importing the builder.
-mock.module('./services/build/git-service', () => ({
-  GitService: {
-    clone: mock(async (_url: string, targetDir: string) => {
-      mkdirSync(targetDir, { recursive: true });
-      writeFileSync(
-        join(targetDir, 'package.json'),
-        JSON.stringify({ scripts: { build: 'bun run build' } }),
-      );
-    }),
-  },
-}));
-
-mock.module('./services/build/log-streamer', () => ({
-  LogStreamer: {
-    stream: mock(() => Promise.resolve()),
-    ensureFlushed: mock(() => Promise.resolve()),
-  },
-}));
-
+// Spies instead of mock.module so the overrides never leak into other test files.
 const { Builder } = await import('./services/build/builder');
+const { GitService } = await import('./services/build/git-service');
+const { LogStreamer } = await import('./services/build/log-streamer');
 
+const cloneSpy = spyOn(GitService, 'clone').mockImplementation(
+  async (_url: string, targetDir: string) => {
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(
+      join(targetDir, 'package.json'),
+      JSON.stringify({ scripts: { build: 'bun run build' } }),
+    );
+  },
+);
+const streamSpy = spyOn(LogStreamer, 'stream').mockImplementation(() => Promise.resolve());
+const flushSpy = spyOn(LogStreamer, 'ensureFlushed').mockImplementation(() => Promise.resolve());
 // Avoid running real install/build commands.
-spyOn(Builder, 'runCommand').mockImplementation(() => Promise.resolve());
+const runCommandSpy = spyOn(Builder, 'runCommand').mockImplementation(() => Promise.resolve());
+
+const restoreSpies = () => {
+  cloneSpy.mockRestore();
+  streamSpy.mockRestore();
+  flushSpy.mockRestore();
+  runCommandSpy.mockRestore();
+};
 
 describe('Deploy Engine builder (in-place build)', () => {
   it('installs and builds exactly once inside the deployment directory', async () => {
@@ -102,6 +104,7 @@ describe('Deploy Engine builder (in-place build)', () => {
   });
 
   afterAll(() => {
+    restoreSpies();
     rmSync(TEST_BASE_DIR, { recursive: true, force: true });
   });
 });

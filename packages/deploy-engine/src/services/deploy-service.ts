@@ -16,8 +16,10 @@ import { isWorkspaceRoot } from '../utils/workspace';
 import { ARTIFACTS_DIR, BASE_DIR, getBuildExtractDir, getProjectDir } from '../config/paths';
 import { getStaticDirectory } from './static-site';
 import { isPortAvailable } from '../utils/port';
+import { requestNginxOrigin } from './nginx-health';
 
-const IS_PLATFORM_PROD = process.env.PLATFORM_ENV === 'production';
+const IS_PLATFORM_PROD =
+  process.env.PLATFORM_ENV === 'production' || process.env.NODE_ENV === 'production';
 
 /**
  * Feature flag for Docker deployments.
@@ -68,7 +70,7 @@ export const DeployService = {
   async activateDeployment(
     projectId: string,
     buildId: string,
-    port: number,
+    port: number | null,
     appType: AppType,
     subdomain: string,
     envVars: Record<string, string> = {},
@@ -76,12 +78,17 @@ export const DeployService = {
     projectName?: string,
   ) {
     const paths = this.getPaths(projectId, buildId);
+    const directStatic = appType === 'vite' && IS_PLATFORM_PROD;
+    if (!directStatic && !port) throw new Error('Runtime applications require an assigned port');
 
     // Step 1: Verify artifact exists (pre-built fast path directory or remote tarball)
     await LogService.step(buildId, 'Starting deployment activation');
     await LogService.detail(buildId, `Project: ${projectId}`);
     await LogService.detail(buildId, `Framework: ${appType}`);
-    await LogService.detail(buildId, `Port: ${port}`);
+    await LogService.detail(
+      buildId,
+      directStatic ? 'Hosting: static files on the domain (no application port)' : `Port: ${port}`,
+    );
 
     let effectiveExtractDir = paths.extractDir;
     let hasExtractedDir = existsSync(paths.extractDir);
@@ -161,26 +168,30 @@ export const DeployService = {
     };
 
     // Step 4: Start application (Docker or direct)
-    if (staticDir && IS_PLATFORM_PROD && !USE_DOCKER) {
+    if (staticDir && directStatic) {
       await LogService.step(buildId, 'Serving Vite build as static files with Nginx');
       await LogService.detail(buildId, `Static root: ${staticDir}`);
-      await LogService.detail(buildId, 'Removing legacy pm0 application process if present');
-      await PM0Service.delete(projectId);
-      // An existing Nginx listener is reloaded in place; no process restart is needed.
-      if (!NginxService.hasStaticConfig(projectId)) {
-        await this.ensurePortFree(port);
-      }
-      await NginxService.createStaticConfig(projectId, staticDir, port, async () => {
+      await NginxService.createStaticDomainConfig(subdomain, staticDir, async () => {
         await LogService.step(buildId, 'Checking static site readiness');
         await this.performHealthCheck(
-          port,
+          443,
           buildId,
           true,
           await Bun.file(join(staticDir, 'index.html')).text(),
+          15000,
+          NginxService.domainForSubdomain(subdomain),
         );
-        // Keep routing inside the transaction so a failure restores the old static root.
-        await configureDomain();
       });
+      domainConfigured = true;
+      await LogService.success(buildId, 'Static domain configured and responding');
+      // Retire the older per-project listener only after the domain serves the new build.
+      await LogService.detail(
+        buildId,
+        'Removing legacy application process and static listener if present',
+      );
+      await PM0Service.delete(projectId);
+      await NginxService.removeStaticConfig(projectId);
+      if (USE_DOCKER) await DockerService.stop(projectId);
     } else if (USE_DOCKER) {
       if (IS_PLATFORM_PROD) await NginxService.removeStaticConfig(projectId);
       await LogService.step(buildId, 'Starting containerized deployment');
@@ -190,7 +201,7 @@ export const DeployService = {
         projectId,
         buildId,
         effectiveAppDir,
-        port,
+        port!,
         appType,
         envVars,
       );
@@ -208,13 +219,13 @@ export const DeployService = {
       // Stop any existing process
       await LogService.detail(buildId, 'Stopping previous deployment if exists');
       if (IS_PLATFORM_PROD) await NginxService.removeStaticConfig(projectId);
-      await this.killProjectProcess(projectId, port);
+      await this.killProjectProcess(projectId, port!);
 
       // Start the application
       await LogService.step(buildId, `Starting ${appType} application`);
       await this.startApplication(
         effectiveAppDir,
-        port,
+        port!,
         appType,
         paths.projectDir,
         buildId,
@@ -240,12 +251,22 @@ export const DeployService = {
     return { success: true };
   },
 
-  async stopDeployment(port: number, projectId?: string, buildId?: string) {
+  async stopDeployment(
+    port: number | null,
+    projectId?: string,
+    buildId?: string,
+    subdomain?: string,
+    appType?: AppType,
+  ) {
     if (buildId) {
       await LogService.step(buildId, 'Stopping deployment');
     }
 
     if (projectId) {
+      if (IS_PLATFORM_PROD && appType === 'vite') {
+        if (!subdomain) throw new Error('Static deployment stop requires its subdomain');
+        await NginxService.removeConfig(subdomain);
+      }
       if (IS_PLATFORM_PROD) await NginxService.removeStaticConfig(projectId);
       if (USE_DOCKER) {
         if (buildId) await LogService.detail(buildId, 'Stopping Docker container');
@@ -255,6 +276,7 @@ export const DeployService = {
         await PM0Service.delete(projectId);
       }
     } else {
+      if (!port) throw new Error('Stopping a deployment requires a project ID or port');
       await this.ensurePortFree(port);
     }
 
@@ -598,6 +620,7 @@ export const DeployService = {
     requireSuccess = false,
     expectedBody?: string,
     timeoutMs = 15000,
+    domain?: string,
   ) {
     console.log(`[DeployService] Waiting for health check on port ${port}...`);
 
@@ -611,9 +634,11 @@ export const DeployService = {
     while (Date.now() < deadline) {
       attempts++;
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/`, {
-          signal: AbortSignal.timeout(1000),
-        });
+        const res = domain
+          ? await requestNginxOrigin(domain)
+          : await fetch(`http://127.0.0.1:${port}/`, {
+              signal: AbortSignal.timeout(1000),
+            });
         const matchesBuild = expectedBody === undefined || (await res.text()) === expectedBody;
         if (expectedBody === undefined) await res.body?.cancel();
         lastResult = `HTTP ${res.status}${res.headers.get('server') ? ` from ${res.headers.get('server')}` : ''}`;
@@ -635,7 +660,10 @@ export const DeployService = {
         lastResult = `Request failed: ${error instanceof Error ? error.message : String(error)}`;
       }
       if (buildId && lastResult !== lastReportedResult) {
-        await LogService.progress(buildId, `Readiness probe on port ${port}: ${lastResult}`);
+        await LogService.progress(
+          buildId,
+          `Readiness probe ${domain ? `for ${domain}` : `on port ${port}`}: ${lastResult}`,
+        );
         lastReportedResult = lastResult;
       }
 
@@ -645,7 +673,7 @@ export const DeployService = {
     }
 
     throw new Error(
-      `Health check failed on http://127.0.0.1:${port}/ within ${maxWaitMs}ms. Last result: ${lastResult}`,
+      `Health check failed on ${domain ? `https://${domain}/ (local Nginx)` : `http://127.0.0.1:${port}/`} within ${maxWaitMs}ms. Last result: ${lastResult}`,
     );
   },
 };

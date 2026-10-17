@@ -3,6 +3,10 @@
  */
 export type AppType = 'nextjs' | 'vite' | 'express' | 'hono' | 'elysia' | 'go';
 
+export function isStaticFramework(type: string): boolean {
+  return type === 'vite';
+}
+
 export interface FrameworkOption {
   value: AppType;
   label: string;

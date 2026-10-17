@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/select';
 
 import { Project } from '@/lib/types';
-import { FRAMEWORK_OPTIONS, AppType } from '@/lib/framework-config';
+import { FRAMEWORK_OPTIONS, AppType, isStaticFramework } from '@/lib/framework-config';
 import { UptimeSettingsCard } from './uptime-settings-card';
 
 interface SettingsTabProps {
@@ -49,6 +49,7 @@ export function SettingsTab({ project }: SettingsTabProps) {
   // Build settings state
   const [buildCommand, setBuildCommand] = useState(project.build_command);
   const [appType, setAppType] = useState<AppType>(project.app_type);
+  const isStatic = isStaticFramework(appType);
   const [rootDirectory, setRootDirectory] = useState(project.root_directory || './');
   const [port, setPort] = useState(project.port ? String(project.port) : '');
   const [savingBuildSettings, setSavingBuildSettings] = useState(false);
@@ -58,13 +59,13 @@ export function SettingsTab({ project }: SettingsTabProps) {
     buildCommand !== project.build_command ||
     appType !== project.app_type ||
     rootDirectory !== (project.root_directory || './') ||
-    port !== (project.port ? String(project.port) : '');
+    (!isStatic && port !== (project.port ? String(project.port) : ''));
 
   const handleSaveBuildSettings = async () => {
     setSavingBuildSettings(true);
     try {
       let parsedPort: number | undefined = undefined;
-      if (port.trim()) {
+      if (!isStatic && port.trim()) {
         parsedPort = parseInt(port, 10);
         if (isNaN(parsedPort) || parsedPort < 1024 || parsedPort > 65535) {
           throw new Error('Port must be between 1024 and 65535');
@@ -211,13 +212,16 @@ export function SettingsTab({ project }: SettingsTabProps) {
                   type="number"
                   min={1024}
                   max={65535}
-                  value={port}
+                  value={isStatic ? '' : port}
+                  disabled={isStatic}
                   onChange={(e) => setPort(e.target.value)}
-                  placeholder="Auto-assigned"
+                  placeholder={isStatic ? 'Not required for static sites' : 'Auto-assigned'}
                   className="font-mono text-sm"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Assigned port on server (1024-65535)
+                  {isStatic
+                    ? 'Static files are served directly by Nginx. No application port is required.'
+                    : 'Assigned port on server (1024-65535)'}
                 </p>
               </div>
             </div>

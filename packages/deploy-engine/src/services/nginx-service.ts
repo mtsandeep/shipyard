@@ -6,6 +6,49 @@ const BASE_DOMAIN = process.env.BASE_DOMAIN || 'thakur.dev';
 const CERTBOT_WEBROOT = process.env.CERTBOT_WEBROOT || '/var/www/certbot';
 const DASHBOARD_ORIGIN = process.env.DASHBOARD_ORIGIN || `https://deploy.${BASE_DOMAIN}`;
 
+function validateStaticRoot(root: string) {
+  if (!root.startsWith('/') || /[\r\n\0"\\$]/.test(root)) {
+    throw new Error('Invalid static site directory');
+  }
+}
+
+function staticDomainLocations(root: string | null): string {
+  if (!root) return 'location / { return 503; }';
+  validateStaticRoot(root);
+  return `
+    root "${root}";
+${staticSiteLocations()}
+    location = /__shipyard_preview {
+        return 301 /__shipyard_preview/;
+    }
+
+    location = /__shipyard_preview/ {
+        rewrite ^ /__shipyard_preview_shell last;
+    }
+
+    location ^~ /__shipyard_preview/ {
+        rewrite ^/__shipyard_preview/(.*)$ /$1 break;
+        try_files $uri @shipyard_preview_fallback;
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Security-Policy "frame-ancestors ${DASHBOARD_ORIGIN}" always;
+    }
+
+    location @shipyard_preview_fallback {
+        if ($uri ~* "\\.(js|mjs|css|map|json|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|wasm|txt|xml|webmanifest)$") { return 404; }
+        if ($uri ~ "^/assets/") { return 404; }
+        rewrite ^ /__shipyard_preview_shell last;
+    }
+
+    location = /__shipyard_preview_shell {
+        internal;
+        try_files /index.html =404;
+        default_type text/html;
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Security-Policy "frame-ancestors ${DASHBOARD_ORIGIN}" always;
+    }
+`;
+}
+
 async function runChecked(command: string[]) {
   const proc = Bun.spawn(command, { stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -111,56 +154,54 @@ async function retry(fn: () => Promise<void>, retries = 3, delayMs = 300) {
 }
 
 export const NginxService = {
-  staticConfigPath(projectId: string) {
-    if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) throw new Error('Invalid project ID');
-    // Keep runtime listeners separate from the public domain/SSL configuration.
-    return join(getNginxDirs().available, `shipyard-static-${projectId}.conf`);
+  domainForSubdomain(sub: string) {
+    if (!this.isSubdomainAllowed(sub)) throw new Error(`Invalid or reserved subdomain: ${sub}`);
+    return `${sub}.${BASE_DOMAIN}`;
   },
 
-  generateStaticConfig(root: string, port: number) {
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-      throw new Error('Invalid static site port');
-    }
-    if (!root.startsWith('/') || /[\r\n\0"\\$]/.test(root)) {
-      throw new Error('Invalid static site directory');
-    }
-    return `server {
-    listen 127.0.0.1:${port};
-    server_name localhost;
-    root "${root}";
-${staticSiteLocations()}
+  getStaticRoot(sub: string): string | null {
+    this.domainForSubdomain(sub);
+    const path = join(getNginxDirs().available, `${sub}.conf`);
+    if (!existsSync(path)) return null;
+    const marker = readFileSync(path, 'utf8').match(/^# shipyard-static-root: (.+)$/m);
+    if (!marker) return null;
+    const root: unknown = JSON.parse(marker[1]);
+    if (typeof root !== 'string') throw new Error('Invalid static site root marker');
+    validateStaticRoot(root);
+    return root;
+  },
+
+  generateStaticDomainConfig(sub: string, root: string | null): string {
+    const domain = this.domainForSubdomain(sub);
+    return `${root ? `# shipyard-static-root: ${JSON.stringify(root)}\n` : ''}
+server {
+    listen 80;
+    server_name ${domain};
+    location /.well-known/acme-challenge/ { root ${CERTBOT_WEBROOT}; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${domain};
+    ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    location /.well-known/acme-challenge/ { root ${CERTBOT_WEBROOT}; }
+${staticDomainLocations(root)}
 }
 `;
   },
 
-  hasStaticConfig(projectId: string) {
-    return existsSync(this.staticConfigPath(projectId));
+  async createStaticDomainConfig(sub: string, root: string, verify: () => Promise<void>) {
+    await this.applyDomainConfig(sub, this.generateStaticDomainConfig(sub, root), verify);
   },
 
-  async createStaticConfig(
-    projectId: string,
-    root: string,
-    port: number,
-    verify?: () => Promise<void>,
-  ) {
-    const path = this.staticConfigPath(projectId);
-    const enabled = join(getNginxDirs().enabled, `shipyard-static-${projectId}.conf`);
-    const previous = existsSync(path) ? readFileSync(path, 'utf8') : null;
-    try {
-      await writeNginxFile(path, this.generateStaticConfig(root, port), false);
-      await linkNginxFile(path, enabled);
-      await this.reload();
-      await verify?.();
-    } catch (error) {
-      if (previous !== null) {
-        await writeNginxFile(path, previous, false);
-      } else {
-        await removeNginxFile(enabled);
-        if (path !== enabled) await removeNginxFile(path);
-      }
-      await this.reload();
-      throw error;
-    }
+  staticConfigPath(projectId: string) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) throw new Error('Invalid project ID');
+    // Keep runtime listeners separate from the public domain/SSL configuration.
+    return join(getNginxDirs().available, `shipyard-static-${projectId}.conf`);
   },
 
   async removeStaticConfig(projectId: string) {
@@ -185,7 +226,8 @@ ${staticSiteLocations()}
    * Generate nginx config with per-domain SSL certificate paths.
    * Uses the domain's own Let's Encrypt cert instead of a wildcard cert.
    */
-  generateConfig(sub: string, port: number) {
+  generateConfig(sub: string, port: number | null) {
+    if (port === null) return this.generateStaticDomainConfig(sub, this.getStaticRoot(sub));
     const fullDomain = `${sub}.${BASE_DOMAIN}`;
     return `
 server {
@@ -263,8 +305,19 @@ server {
    * Used BEFORE SSL cert is issued — only serves ACME challenge + proxy.
    * This allows certbot webroot validation to work.
    */
-  generateHttpOnlyConfig(sub: string, port: number) {
+  generateHttpOnlyConfig(sub: string, port: number | null) {
     const fullDomain = `${sub}.${BASE_DOMAIN}`;
+    if (port === null) {
+      const root = this.getStaticRoot(sub);
+      return `${root ? `# shipyard-static-root: ${JSON.stringify(root)}\n` : ''}
+server {
+    listen 80;
+    server_name ${fullDomain};
+    location /.well-known/acme-challenge/ { root ${CERTBOT_WEBROOT}; }
+${staticDomainLocations(root)}
+}
+`;
+    }
     return `
 server {
     listen 80;
@@ -290,7 +343,11 @@ server {
 `;
   },
 
-  async createConfig(sub: string, port: number) {
+  async createConfig(sub: string, port: number | null) {
+    await this.applyDomainConfig(sub, this.generateConfig(sub, port));
+  },
+
+  async applyDomainConfig(sub: string, content: string, verify?: () => Promise<void>) {
     if (!this.isSubdomainAllowed(sub)) {
       throw new Error(`Invalid or reserved subdomain: ${sub}`);
     }
@@ -301,13 +358,14 @@ server {
 
     const previous = existsSync(availablePath) ? readFileSync(availablePath, 'utf8') : null;
     try {
-      await writeNginxFile(availablePath, this.generateConfig(sub, port));
+      await writeNginxFile(availablePath, content, false);
       await linkNginxFile(availablePath, enabledPath);
       await this.reload();
+      await verify?.();
     } catch (error) {
       // A failed reload must not leave an invalid file blocking every later deploy.
       if (previous !== null) {
-        await writeNginxFile(availablePath, previous);
+        await writeNginxFile(availablePath, previous, false);
       } else {
         await removeNginxFile(enabledPath);
         if (availablePath !== enabledPath) await removeNginxFile(availablePath);
@@ -317,7 +375,7 @@ server {
     }
   },
 
-  async ensurePreviewConfig(sub: string, port: number) {
+  async ensurePreviewConfig(sub: string, port: number | null) {
     if (!this.isSubdomainAllowed(sub)) {
       throw new Error(`Invalid or reserved subdomain: ${sub}`);
     }
@@ -330,7 +388,8 @@ server {
         const config = readFileSync(availablePath, 'utf8');
         if (
           config.includes('location ^~ /__shipyard_preview/') &&
-          config.includes(`proxy_pass http://localhost:${port}/;`)
+          (this.getStaticRoot(sub) !== null ||
+            config.includes(`proxy_pass http://localhost:${port}/;`))
         ) {
           return;
         }
@@ -339,14 +398,20 @@ server {
       }
     }
 
-    await this.createConfig(sub, port);
+    const root = this.getStaticRoot(sub);
+    if (root) {
+      await this.applyDomainConfig(sub, this.generateStaticDomainConfig(sub, root));
+    } else {
+      if (port === null) throw new Error('No active static site configuration found');
+      await this.createConfig(sub, port);
+    }
   },
 
   /**
    * Create an HTTP-only nginx config (no SSL) for ACME challenge serving.
    * Used during initial domain provisioning before SSL cert is issued.
    */
-  async createHttpOnlyConfig(sub: string, port: number) {
+  async createHttpOnlyConfig(sub: string, port: number | null) {
     if (!this.isSubdomainAllowed(sub)) {
       throw new Error(`Invalid or reserved subdomain: ${sub}`);
     }
@@ -363,13 +428,8 @@ server {
   /**
    * Upgrade an existing HTTP-only config to full HTTPS after SSL cert is issued.
    */
-  async upgradeToHttps(sub: string, port: number) {
-    const { available } = getNginxDirs();
-    const availablePath = join(available, `${sub}.conf`);
-
-    // Overwrite with the full HTTPS config
-    await writeNginxFile(availablePath, this.generateConfig(sub, port));
-    await this.reload();
+  async upgradeToHttps(sub: string, port: number | null) {
+    await this.createConfig(sub, port);
   },
 
   async removeConfig(sub: string) {

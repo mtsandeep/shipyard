@@ -1,8 +1,7 @@
-import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
+import { describe, expect, test, afterAll } from 'bun:test';
 import { DeployService } from './services/deploy-service';
 import { join } from 'path';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
-import { bunExe } from './test-utils'; // Assuming hypothetical util, or just use "bun"
+import { mkdirSync, writeFileSync } from 'fs';
 
 // Mock constants/env if needed or just rely on the service using process.cwd()
 // We might need to adjust BASE_DIR env var for safety
@@ -108,7 +107,7 @@ describe('Redeploy Flow', () => {
 
   afterAll(async () => {
     // Cleanup
-    await DeployService.killProcessOnPort(TEST_PORT);
+    await DeployService.killProjectProcess(projectId, TEST_PORT);
     await Bun.spawn(['rm', '-rf', 'test-workspace']).exited;
   });
 });

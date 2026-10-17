@@ -5,6 +5,7 @@ import { db } from '../db';
 import { projects, builds, deployments } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { ProjectAccessService } from '../services/project-access-service';
+import { isStaticFramework } from '../config/framework-config';
 
 export const domainsRoutes = new Elysia({ prefix: '/domains' })
   .get(
@@ -99,7 +100,7 @@ export const domainsRoutes = new Elysia({ prefix: '/domains' })
         return { error: 'Project has no domain assigned' };
       }
 
-      if (!project.port) {
+      if (!project.port && !isStaticFramework(project.app_type)) {
         set.status = 400;
         return { error: 'Project has no port assigned' };
       }
@@ -112,7 +113,7 @@ export const domainsRoutes = new Elysia({ prefix: '/domains' })
       const result = await DomainService.provision(
         projectId,
         subdomain,
-        project.port,
+        isStaticFramework(project.app_type) ? null : project.port,
         async (step, message) => {
           WebSocketService.broadcastDomainStatus(projectId, {
             step,
@@ -150,20 +151,24 @@ export const domainsRoutes = new Elysia({ prefix: '/domains' })
         return { error: 'Project not found' };
       }
 
-      if (!project.port) {
+      if (!project.port && !isStaticFramework(project.app_type)) {
         set.status = 400;
         return { error: 'Project has no port assigned' };
       }
 
       const { WebSocketService } = await import('../ws');
 
-      const result = await DomainService.retry(projectId, project.port, async (step, message) => {
-        WebSocketService.broadcastDomainStatus(projectId, {
-          step,
-          message,
-          project_id: projectId,
-        });
-      });
+      const result = await DomainService.retry(
+        projectId,
+        isStaticFramework(project.app_type) ? null : project.port,
+        async (step, message) => {
+          WebSocketService.broadcastDomainStatus(projectId, {
+            step,
+            message,
+            project_id: projectId,
+          });
+        },
+      );
 
       if (!result.success) {
         set.status = 500;

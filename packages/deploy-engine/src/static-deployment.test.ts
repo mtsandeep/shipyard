@@ -177,32 +177,70 @@ describe('Vite static deployment', () => {
     expect(await Bun.file(join(directory, 'current_build_id')).text()).toBe('new');
   });
 
-  test('Nginx static runtime uses a private listener and SPA fallback', () => {
-    const config = NginxService.generateStaticConfig('/var/lib/shipyard/apps/example/dist', 5001);
-    expect(config).toContain('listen 127.0.0.1:5001;');
+  test('Nginx serves a static domain directly with no application listener or proxy', () => {
+    const config = NginxService.generateStaticDomainConfig(
+      'example',
+      '/var/lib/shipyard/apps/example/dist',
+    );
+    expect(config).toContain('listen 443 ssl;');
+    expect(config).not.toContain('proxy_pass');
+    expect(config).not.toContain('127.0.0.1:');
     expect(config).toContain('try_files $uri $uri/ /index.html;');
     expect(config).toContain('try_files $uri =404;');
     expect(config).toContain('Cache-Control "no-cache"');
-    expect(() => NginxService.generateStaticConfig('/bad";root /;', 5001)).toThrow();
+    expect(config).toContain('location ^~ /__shipyard_preview/');
+    expect(() => NginxService.generateStaticDomainConfig('example', '/bad";root /;')).toThrow();
+  });
+
+  test('static preview and SSL provisioning preserve the domain root without inventing a port', async () => {
+    const oldSitesDir = process.env.NGINX_SITES_DIR;
+    process.env.NGINX_SITES_DIR = directory;
+    const root = join(directory, 'dist');
+    await writeFile(
+      join(directory, 'static-preview.conf'),
+      NginxService.generateStaticDomainConfig('static-preview', root),
+    );
+    const reload = spyOn(NginxService, 'reload').mockResolvedValue(undefined);
+    try {
+      expect(NginxService.getStaticRoot('static-preview')).toBe(root);
+      await NginxService.ensurePreviewConfig('static-preview', null);
+      expect(reload).not.toHaveBeenCalled();
+      for (const config of [
+        NginxService.generateConfig('static-preview', null),
+        NginxService.generateHttpOnlyConfig('static-preview', null),
+      ]) {
+        expect(config).toContain(`root "${root}";`);
+        expect(config).not.toContain('proxy_pass');
+        expect(config).not.toContain('localhost:null');
+      }
+      const unbuilt = NginxService.generateHttpOnlyConfig('unbuilt-static', null);
+      expect(unbuilt).toContain('return 503;');
+      expect(unbuilt).toContain('/.well-known/acme-challenge/');
+      expect(unbuilt).not.toContain('proxy_pass');
+    } finally {
+      reload.mockRestore();
+      if (oldSitesDir === undefined) delete process.env.NGINX_SITES_DIR;
+      else process.env.NGINX_SITES_DIR = oldSitesDir;
+    }
   });
 
   test('failed Nginx reload or serving verification restores the previous static root', async () => {
     const oldSitesDir = process.env.NGINX_SITES_DIR;
     process.env.NGINX_SITES_DIR = directory;
-    const configPath = NginxService.staticConfigPath('rollback-test');
-    const previous = NginxService.generateStaticConfig('/previous/dist', 5001);
+    const configPath = join(directory, 'rollback-test.conf');
+    const previous = NginxService.generateStaticDomainConfig('rollback-test', '/previous/dist');
     await writeFile(configPath, previous);
     const reload = spyOn(NginxService, 'reload');
     try {
       reload.mockRejectedValueOnce(new Error('reload failed')).mockResolvedValue(undefined);
       await expect(
-        NginxService.createStaticConfig('rollback-test', '/next/dist', 5001),
+        NginxService.createStaticDomainConfig('rollback-test', '/next/dist', async () => {}),
       ).rejects.toThrow('reload failed');
       expect(await Bun.file(configPath).text()).toBe(previous);
       expect(reload).toHaveBeenCalledTimes(2);
 
       await expect(
-        NginxService.createStaticConfig('rollback-test', '/next/dist', 5001, async () => {
+        NginxService.createStaticDomainConfig('rollback-test', '/next/dist', async () => {
           throw new Error('site returned 404');
         }),
       ).rejects.toThrow('site returned 404');

@@ -30,7 +30,12 @@ import {
 } from '@/components/ui/select';
 import { GitRepository } from './repository-list';
 import { EnvVarEditor, EnvVar } from '../env-var-editor';
-import { AppType, FRAMEWORK_OPTIONS, getDefaultBuildCommand } from '@/lib/framework-config';
+import {
+  AppType,
+  FRAMEWORK_OPTIONS,
+  getDefaultBuildCommand,
+  isStaticFramework,
+} from '@/lib/framework-config';
 import { cn } from '@/lib/utils';
 
 interface ProjectConfigFormProps {
@@ -67,6 +72,7 @@ export function ProjectConfigForm({
   const [port, setPort] = useState('');
   const detectedAppType = (initialFramework as AppType) || 'nextjs';
   const [appType, setAppType] = useState<AppType>(detectedAppType);
+  const isStatic = isStaticFramework(appType);
   const [buildCommand, setBuildCommand] = useState(getDefaultBuildCommand(detectedAppType));
   const [autoDeploy, setAutoDeploy] = useState(true);
   const [envVars, setEnvVars] = useState<EnvVar[]>([]);
@@ -78,6 +84,11 @@ export function ProjectConfigForm({
   const handleAppTypeChange = (value: AppType) => {
     setAppType(value);
     setBuildCommand(getDefaultBuildCommand(value));
+    if (isStaticFramework(value)) {
+      setPort('');
+      setPortStatus('idle');
+      setPortError('');
+    }
   };
 
   const [subdomainStatus, setSubdomainStatus] = useState<
@@ -108,7 +119,7 @@ export function ProjectConfigForm({
   const [portError, setPortError] = useState('');
 
   const checkPort = async (): Promise<boolean> => {
-    if (!port) return true;
+    if (isStatic || !port) return true;
     const portNum = parseInt(port, 10);
     if (isNaN(portNum) || portNum < 1024 || portNum > 65535) {
       setPortStatus('unavailable');
@@ -143,7 +154,7 @@ export function ProjectConfigForm({
       }
     }
 
-    if (port.trim()) {
+    if (!isStatic && port.trim()) {
       const isPortFree = await checkPort();
       if (!isPortFree) {
         return toast.error(portError || 'Port is unavailable');
@@ -164,7 +175,7 @@ export function ProjectConfigForm({
       buildCommand,
       rootDirectory,
       domain,
-      port: port.trim() ? parseInt(port, 10) : undefined,
+      port: !isStatic && port.trim() ? parseInt(port, 10) : undefined,
       envVars: envVarsRecord,
       autoDeploy,
     });
@@ -395,13 +406,16 @@ export function ProjectConfigForm({
                 type="number"
                 min={1024}
                 max={65535}
-                value={port}
+                value={isStatic ? '' : port}
+                disabled={isStatic}
                 onChange={(e) => {
                   setPort(e.target.value);
                   setPortStatus('idle');
                   setPortError('');
                 }}
-                placeholder="Auto-assigned (5000-6000)"
+                placeholder={
+                  isStatic ? 'Not required for static sites' : 'Auto-assigned (5000-6000)'
+                }
                 className="bg-surface-muted/60 border-border"
               />
             </div>
@@ -410,7 +424,7 @@ export function ProjectConfigForm({
               variant="outline"
               size="sm"
               onClick={checkPort}
-              disabled={!port || portStatus === 'loading'}
+              disabled={isStatic || !port || portStatus === 'loading'}
               className="h-10 border-border hover:bg-surface-muted text-foreground/90"
             >
               {portStatus === 'loading' ? (
@@ -421,14 +435,16 @@ export function ProjectConfigForm({
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Leave blank for auto-assignment, or specify a custom port (1024-65535).
+            {isStatic
+              ? 'Static files are served directly by Nginx. No application port is required.'
+              : 'Leave blank for auto-assignment, or specify a custom port (1024-65535).'}
           </p>
-          {portStatus === 'available' && (
+          {!isStatic && portStatus === 'available' && (
             <p className="text-sm text-foreground/90 flex items-center gap-1">
               <Check className="h-3 w-3 text-emerald-400" /> Port is available
             </p>
           )}
-          {portStatus === 'unavailable' && (
+          {!isStatic && portStatus === 'unavailable' && (
             <p className="text-sm text-destructive flex items-center gap-1">
               <X className="h-3 w-3" /> {portError || 'Port is already taken'}
             </p>

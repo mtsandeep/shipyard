@@ -7,7 +7,7 @@ import { db } from '../db';
 import { deployments } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { DeploymentService } from '../services/deployment-service';
-import { AppType, APP_TYPES } from '../config/framework-config';
+import { AppType, APP_TYPES, isStaticFramework } from '../config/framework-config';
 
 const appTypeSchema = t.Union(
   APP_TYPES.map((type) => t.Literal(type)) as [
@@ -203,7 +203,11 @@ export const projectsRoutes = new Elysia({ prefix: '/projects' })
       where: and(eq(deployments.project_id, id), eq(deployments.status, 'active')),
       columns: { id: true },
     });
-    if (!activeDeployment || !project.port || !project.domain) {
+    if (
+      !activeDeployment ||
+      (!project.port && !isStaticFramework(project.app_type)) ||
+      !project.domain
+    ) {
       return { preview_url: null, embeddable: false };
     }
 

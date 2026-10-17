@@ -50,7 +50,7 @@ const app = new Elysia()
       body: {
         projectId: string;
         buildId: string;
-        port: number;
+        port: number | null;
         appType: any;
         subdomain: string;
         rootDirectory?: string;
@@ -82,7 +82,7 @@ const app = new Elysia()
       body: t.Object({
         projectId: t.String(),
         buildId: t.String(),
-        port: t.Number(),
+        port: t.Nullable(t.Number()),
         appType: t.Union([
           t.Literal('nextjs'),
           t.Literal('vite'),
@@ -101,9 +101,9 @@ const app = new Elysia()
   .post(
     '/stop',
     async ({ body }: { body: any }) => {
-      const { port, projectId, buildId } = body;
+      const { port, projectId, buildId, subdomain, appType } = body;
       try {
-        await DeployService.stopDeployment(port, projectId, buildId);
+        await DeployService.stopDeployment(port, projectId, buildId, subdomain, appType);
         return { success: true };
       } catch (e: any) {
         return new Response(e.message, { status: 500 });
@@ -111,9 +111,11 @@ const app = new Elysia()
     },
     {
       body: t.Object({
-        port: t.Number(),
+        port: t.Nullable(t.Number()),
         projectId: t.Optional(t.String()),
         buildId: t.Optional(t.String()),
+        subdomain: t.Optional(t.String()),
+        appType: t.Optional(t.String()),
       }),
     },
   )
@@ -215,8 +217,11 @@ const app = new Elysia()
   })
   // Nginx configuration management endpoints
   .post('/nginx/http-only', async ({ body }) => {
-    const { subdomain, port } = (body || {}) as { subdomain: string; port: number };
-    if (!subdomain || !port) return new Response('subdomain and port required', { status: 400 });
+    const { subdomain, port } = (body || {}) as { subdomain: string; port: number | null };
+    if (!subdomain || port === undefined)
+      return new Response('subdomain and port (or null for static hosting) required', {
+        status: 400,
+      });
     try {
       await NginxService.createHttpOnlyConfig(subdomain, port);
       return { success: true };
@@ -225,8 +230,11 @@ const app = new Elysia()
     }
   })
   .post('/nginx/upgrade-https', async ({ body }) => {
-    const { subdomain, port } = body as { subdomain: string; port: number };
-    if (!subdomain || !port) return new Response('subdomain and port required', { status: 400 });
+    const { subdomain, port } = body as { subdomain: string; port: number | null };
+    if (!subdomain || port === undefined)
+      return new Response('subdomain and port (or null for static hosting) required', {
+        status: 400,
+      });
     try {
       await NginxService.upgradeToHttps(subdomain, port);
       return { success: true };
@@ -235,12 +243,10 @@ const app = new Elysia()
     }
   })
   .post('/nginx/preview', async ({ body }) => {
-    const { subdomain, port } = body as { subdomain: string; port: number };
+    const { subdomain, port } = body as { subdomain: string; port: number | null };
     if (
       !NginxService.isSubdomainAllowed(subdomain) ||
-      !Number.isInteger(port) ||
-      port < 1024 ||
-      port > 65535
+      (port !== null && (!Number.isInteger(port) || port < 1024 || port > 65535))
     ) {
       return new Response('valid subdomain and port required', { status: 400 });
     }

@@ -36,16 +36,22 @@ Vite apps are built with the configured build command (normally `bun run build`)
 The app directory, including a configured monorepo root directory, must contain
 `dist/index.html` after the build. A missing output fails the build and activation.
 
-In production, Nginx serves these files directly through a loopback listener on the
-project's assigned port; Vite does not need a Bun app process or `vite preview`.
-The existing domain, HTTPS, and dashboard preview routes proxy to that listener.
-Docker mode uses an Nginx static image with the same SPA routing rules, rather than
-the repository's runtime Dockerfile. Local development uses a small Bun static
-server, which is also included in the deploy engine's compiled output.
+In production, the domain's Nginx virtual host serves these files directly on the
+standard HTTP/HTTPS ports. Vite projects have no assigned application port and no
+Bun/pm0 process or Docker container. The dashboard preview serves the same static
+root. Port controls are disabled when Vite is selected in project configuration.
+This also applies when runtime applications use Docker mode. Local development
+uses an automatically assigned port and a small Bun static server, which is also
+included in the deploy engine's compiled output.
 
 Browser-history routes fall back to `index.html`, missing bundles return 404, and
-HTML is revalidated so browsers pick up new deployments. Static activation requires
-a successful HTTP response, and domain configuration failures fail deployment.
+HTML is revalidated so browsers pick up new deployments. Static activation probes
+the local Nginx HTTPS virtual host using the domain's SNI, validates its certificate,
+and checks that the response matches the new build (bypassing DNS/CDN caches).
+Configuration or readiness failures restore the previous domain configuration.
+Existing Vite deployments migrate on their next activation: the old per-project
+Nginx listener and managed application process are retired, then the stored port
+is cleared. No database migration is required.
 The Nginx worker must have read/traverse access to the deployed `dist` directory
 and its parent directories (the default `/var/lib/shipyard/apps` location is intended
 for this). An unreadable output fails the activation health check.

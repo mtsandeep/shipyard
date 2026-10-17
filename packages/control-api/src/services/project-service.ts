@@ -1,7 +1,10 @@
 import { db } from '../db';
 import { builds, deployments, projects, uptimeMonitors } from '../db/schema';
 import { and, desc, eq, getTableColumns, sql } from 'drizzle-orm';
-import { AppType } from '../config/framework-config';
+import { AppType, isStaticFramework } from '../config/framework-config';
+
+const IS_PLATFORM_PROD =
+  process.env.NODE_ENV === 'production' || process.env.PLATFORM_ENV === 'production';
 
 export const ProjectService = {
   async getAll(ownerId: string) {
@@ -173,9 +176,12 @@ export const ProjectService = {
     github_installation_id?: string;
     auto_deploy?: boolean;
   }) {
-    let nextPort: number;
+    let nextPort: number | null;
 
-    if (data.port) {
+    if (isStaticFramework(data.app_type)) {
+      // Local development still uses an automatically assigned preview server.
+      nextPort = IS_PLATFORM_PROD ? null : await this.allocateNextPort();
+    } else if (data.port) {
       const check = await this.checkPortAvailability(data.port);
       if (!check.available) {
         throw new Error(check.reason || `Port ${data.port} is not available`);
@@ -185,11 +191,13 @@ export const ProjectService = {
       nextPort = await this.allocateNextPort();
     }
 
-    console.log(`[ProjectService] Using port ${nextPort} for project "${data.name}"`);
+    console.log(
+      `[ProjectService] ${nextPort ? `Using port ${nextPort}` : 'Using static hosting without an application port'} for project "${data.name}"`,
+    );
 
     // Determine domain (Auto-generate in Production if missing)
     let domain = data.domain?.trim() || null;
-    if (process.env.NODE_ENV === 'production' && !domain) {
+    if (IS_PLATFORM_PROD && !domain) {
       const baseDomain = process.env.BASE_DOMAIN || 'thakur.dev';
       const slug = data.name
         .toLowerCase()
@@ -279,12 +287,25 @@ export const ProjectService = {
   },
 
   async update(id: string, ownerId: string, data: Partial<typeof projects.$inferInsert>) {
+    const existing = await db.query.projects.findFirst({
+      where: and(eq(projects.id, id), eq(projects.owner_id, ownerId)),
+    });
+    if (!existing) return null;
     const updateData = { ...data };
+    const appType = updateData.app_type || existing.app_type;
+    if (isStaticFramework(appType)) {
+      // Keep legacy routing intact until a successful static activation retires it.
+      updateData.port = IS_PLATFORM_PROD
+        ? existing.port
+        : existing.port || (await this.allocateNextPort());
+    } else if (!updateData.port && !existing.port) {
+      updateData.port = await this.allocateNextPort();
+    }
     const domain = updateData.domain;
     if (typeof domain === 'string' && domain.trim() === '') {
       updateData.domain = null;
     }
-    if (updateData.port) {
+    if (updateData.port && updateData.port !== existing.port) {
       const check = await this.checkPortAvailability(updateData.port, id);
       if (!check.available) {
         throw new Error(check.reason || `Port ${updateData.port} is not available`);
