@@ -127,18 +127,26 @@ export function UptimeTab({ project }: UptimeTabProps) {
   };
 
   const history = settings?.history ?? [];
-  const successfulChecks = history.filter((c) => c.success);
-  const successRate = history.length
-    ? Math.round((successfulChecks.length / history.length) * 100)
-    : null;
+  const summary = settings?.summary;
+
+  const successRate =
+    summary?.uptime_percentage !== undefined
+      ? summary.uptime_percentage
+      : history.length
+        ? Math.round((history.filter((c) => c.success).length / history.length) * 100)
+        : null;
 
   const avgLatency =
-    successfulChecks.length > 0
-      ? Math.round(
-          successfulChecks.reduce((acc, c) => acc + (c.latency_ms || 0), 0) /
-            successfulChecks.length,
-        )
-      : null;
+    summary?.avg_latency_ms !== undefined
+      ? summary.avg_latency_ms
+      : history.some((c) => c.success && c.latency_ms !== null)
+        ? Math.round(
+            history
+              .filter((c) => c.success && c.latency_ms !== null)
+              .reduce((acc, c) => acc + (c.latency_ms || 0), 0) /
+              (history.filter((c) => c.success && c.latency_ms !== null).length || 1),
+          )
+        : null;
 
   const isUp = settings?.enabled && settings.current_status === 'up';
   const isDown = settings?.enabled && settings.current_status === 'down';
@@ -156,84 +164,6 @@ export function UptimeTab({ project }: UptimeTabProps) {
 
   return (
     <div className="space-y-6 animate-in fade-in-50 duration-300">
-      {/* Primary Action & Status Hero Banner */}
-      <Card className="border-border bg-card p-5 sm:p-6 shadow-sm">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start sm:items-center gap-4">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border bg-surface-muted text-muted-foreground">
-              <Activity className="h-5 w-5" />
-            </span>
-
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <h2 className="text-xl font-semibold tracking-tight text-foreground">
-                  {enabled
-                    ? isDown
-                      ? 'Monitoring Active — Service Down'
-                      : 'Monitoring Active'
-                    : 'Monitoring Paused'}
-                </h2>
-                <Badge
-                  variant={enabled ? (isDown ? 'destructive' : 'outline') : 'secondary'}
-                  className="gap-1.5 font-normal text-xs"
-                >
-                  <span
-                    className={cn(
-                      'h-1.5 w-1.5 rounded-full',
-                      enabled
-                        ? isDown
-                          ? 'bg-destructive-foreground animate-pulse'
-                          : 'bg-brand-500'
-                        : 'bg-muted-foreground/60',
-                    )}
-                  />
-                  {enabled ? (isDown ? 'Down' : 'Active') : 'Paused'}
-                </Badge>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {enabled
-                  ? `Automated checks run ${intervalLabel} against ${endpoint.trim() || defaultMonitoredUrl}.`
-                  : 'Scheduled health checks are currently stopped. Start monitoring to begin recording uptime history and alerts.'}
-              </p>
-            </div>
-          </div>
-
-          {/* Primary Action Button */}
-          <div className="flex shrink-0 items-center gap-3">
-            {enabled ? (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => handleToggleEnabled(false)}
-                disabled={!settings || togglingStatus}
-                className="gap-2"
-              >
-                {togglingStatus ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Pause className="h-4 w-4" />
-                )}
-                Pause Monitoring
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                onClick={() => handleToggleEnabled(true)}
-                disabled={!settings || togglingStatus}
-                className="gap-2"
-              >
-                {togglingStatus ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4 fill-current" />
-                )}
-                Start Monitoring
-              </Button>
-            )}
-          </div>
-        </div>
-      </Card>
-
       {/* Stat Cards Overview */}
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {/* Status */}
@@ -271,9 +201,11 @@ export function UptimeTab({ project }: UptimeTabProps) {
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            {history.length > 0
-              ? `Calculated from last ${history.length} checks`
-              : 'Awaiting checks'}
+            {summary && summary.total_checks > 0
+              ? `Last ${summary.window_days} days (${summary.total_checks} checks)`
+              : history.length > 0
+                ? `Calculated from last ${history.length} checks`
+                : 'Awaiting checks'}
           </p>
         </Card>
 
@@ -289,11 +221,13 @@ export function UptimeTab({ project }: UptimeTabProps) {
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            {avgLatency !== null
-              ? avgLatency < 250
-                ? 'Fast response time'
-                : 'Standard response time'
-              : 'No latency metrics yet'}
+            {summary && summary.total_checks > 0
+              ? `Last ${summary.window_days} days average`
+              : avgLatency !== null
+                ? avgLatency < 250
+                  ? 'Fast response time'
+                  : 'Standard response time'
+                : 'No latency metrics yet'}
           </p>
         </Card>
 
@@ -418,7 +352,14 @@ export function UptimeTab({ project }: UptimeTabProps) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="text-lg">Recent Check History</CardTitle>
+            <div className="flex items-center gap-2.5">
+              <CardTitle className="text-lg">Recent Check History</CardTitle>
+              {history.length > 0 && (
+                <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
+                  Last {history.length} checks
+                </Badge>
+              )}
+            </div>
             <CardDescription className="mt-1">
               Log of latest response checks, latency measurements, and HTTP status codes.
             </CardDescription>

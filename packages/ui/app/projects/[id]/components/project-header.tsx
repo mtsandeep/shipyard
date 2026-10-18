@@ -82,9 +82,21 @@ export function ProjectHeader({
     }
 
     if (activeDeployment) {
+      if (project?.uptime_status === 'down') {
+        return (
+          <Badge
+            variant="destructive"
+            className="gap-1.5 font-normal border-red-500/30 bg-red-500/10 text-red-400"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+            <span>Service Down</span>
+          </Badge>
+        );
+      }
+
       return (
         <Badge variant="outline" className="gap-1.5 font-normal">
-          <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
           <span>Production live</span>
         </Badge>
       );
@@ -129,15 +141,9 @@ export function ProjectHeader({
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" size="sm" asChild>
-              <a
-                href={project.github_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="gap-2"
-              >
+            <Button variant="ghost" size="icon-sm" asChild>
+              <a href={project.github_url} target="_blank" rel="noopener noreferrer">
                 <Github className="h-4 w-4" />
-                <span className="hidden sm:inline">Repository</span>
               </a>
             </Button>
             {activeDeployment && liveUrl && (

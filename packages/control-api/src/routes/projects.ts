@@ -4,7 +4,7 @@ import { ProjectAccessService } from '../services/project-access-service';
 import { UptimeService } from '../services/uptime-service';
 import { SecurityService } from '../services/security-service';
 import { db } from '../db';
-import { deployments } from '../db/schema';
+import { deployments, uptimeMonitors } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { DeploymentService } from '../services/deployment-service';
 import { AppType, APP_TYPES, isStaticFramework } from '../config/framework-config';
@@ -100,7 +100,13 @@ export const projectsRoutes = new Elysia({ prefix: '/projects' })
       set.status = 404;
       return { error: 'Project not found' };
     }
-    return project;
+    const monitor = await db.query.uptimeMonitors.findFirst({
+      where: eq(uptimeMonitors.project_id, id),
+    });
+    return {
+      ...project,
+      uptime_status: monitor?.enabled ? monitor.current_status : null,
+    };
   })
   .get('/:id/events', async ({ params: { id }, request, set }) => {
     const project = await ProjectAccessService.getOwnedProject(request, id);
@@ -249,18 +255,29 @@ export const projectsRoutes = new Elysia({ prefix: '/projects' })
       return { error: 'Could not configure the embedded preview' };
     }
   })
-  .get('/:id/uptime', async ({ params: { id }, request, set }) => {
-    if (!(await ProjectAccessService.getOwnedProject(request, id))) {
-      set.status = 404;
-      return { error: 'Project not found' };
-    }
-    const settings = await UptimeService.getSettings(id);
-    if (!settings) {
-      set.status = 404;
-      return { error: 'Uptime monitor not found' };
-    }
-    return settings;
-  })
+  .get(
+    '/:id/uptime',
+    async ({ params: { id }, query, request, set }) => {
+      if (!(await ProjectAccessService.getOwnedProject(request, id))) {
+        set.status = 404;
+        return { error: 'Project not found' };
+      }
+      const limit = query?.limit ? Math.min(Math.max(Number(query.limit) || 20, 1), 100) : 20;
+      const settings = await UptimeService.getSettings(id, limit);
+      if (!settings) {
+        set.status = 404;
+        return { error: 'Uptime monitor not found' };
+      }
+      return settings;
+    },
+    {
+      query: t.Optional(
+        t.Object({
+          limit: t.Optional(t.String()),
+        }),
+      ),
+    },
+  )
   .put(
     '/:id/uptime',
     async ({ params: { id }, request, body, set }) => {

@@ -109,15 +109,31 @@ export function ActiveDeploymentCard({
         <div className="flex flex-col border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex items-center gap-3">
             <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              <span
+                className={`absolute inline-flex h-full w-full rounded-full ${
+                  project?.uptime_status === 'down'
+                    ? 'animate-ping bg-red-400 opacity-60'
+                    : 'animate-ping bg-emerald-400 opacity-40'
+                }`}
+              />
+              <span
+                className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
+                  project?.uptime_status === 'down' ? 'bg-red-500' : 'bg-emerald-500'
+                }`}
+              />
             </span>
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="font-semibold">Production</h2>
-                <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/10">
-                  Live
-                </Badge>
+                {project?.uptime_status === 'down' ? (
+                  <Badge className="border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/10">
+                    Service Down
+                  </Badge>
+                ) : (
+                  <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/10">
+                    Live
+                  </Badge>
+                )}
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Released {new Date(activeDeployment.activated_at).toLocaleString()}

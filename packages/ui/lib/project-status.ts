@@ -9,7 +9,9 @@ interface ProjectStatus {
 
 /** The latest attempt can fail even while an older deployment is still live. */
 export function getProjectStatus(
-  project: Pick<Project, 'latest_build' | 'latest_deployment'>,
+  project: Pick<Project, 'latest_build' | 'latest_deployment'> & {
+    uptime_status?: 'unknown' | 'up' | 'down' | null;
+  },
 ): ProjectStatus {
   const build = project.latest_build;
   const deployment = project.latest_deployment;
@@ -28,6 +30,14 @@ export function getProjectStatus(
     };
     switch (deployment.status) {
       case 'active':
+        if (project.uptime_status === 'down') {
+          return {
+            ...common,
+            label: 'Down',
+            tone: 'error',
+            detail: 'Service is down (uptime monitor check failing)',
+          };
+        }
         return { ...common, label: 'Ready', tone: 'success' };
       case 'failed':
         return { ...common, label: 'Failed', tone: 'error' };

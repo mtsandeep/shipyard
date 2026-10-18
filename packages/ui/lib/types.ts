@@ -24,6 +24,7 @@ export interface Project {
     status_message: string | null;
     activated_at: string;
   } | null;
+  uptime_status?: 'unknown' | 'up' | 'down' | null;
 }
 
 export type DeploymentStatus =
@@ -67,6 +68,14 @@ export interface UptimeCheck {
   error: string | null;
 }
 
+export interface UptimeSummary {
+  uptime_percentage: number | null;
+  avg_latency_ms: number | null;
+  total_checks: number;
+  successful_checks: number;
+  window_days: number;
+}
+
 export interface UptimeSettings {
   enabled: boolean;
   endpoint_url: string | null;
@@ -76,6 +85,7 @@ export interface UptimeSettings {
   last_checked_at: string | null;
   down_since: string | null;
   history: UptimeCheck[];
+  summary?: UptimeSummary;
 }
 
 export interface EnvVar {

@@ -318,6 +318,14 @@ body {
     user-select: none;
     pointer-events: none;
   }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }
 
 /* Respect the OS setting: no decorative motion, but keep progress spinners

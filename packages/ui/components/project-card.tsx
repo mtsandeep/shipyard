@@ -134,9 +134,21 @@ export function ProjectCard({ project }: { project: Project }) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between mb-0.5">
-                <h3 className="font-semibold text-sm truncate text-foreground pr-4">
+                <h3 className="font-semibold text-sm truncate text-foreground pr-2">
                   {project.name}
                 </h3>
+                {project.uptime_status === 'down' && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-400 border border-red-500/20 shrink-0">
+                    <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+                    Down
+                  </span>
+                )}
+                {project.uptime_status === 'up' && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400 border border-emerald-500/20 shrink-0">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    Live
+                  </span>
+                )}
               </div>
               <a
                 href={
@@ -167,7 +179,7 @@ export function ProjectCard({ project }: { project: Project }) {
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs" title={status.detail}>
               <span className={cn('relative flex h-2 w-2')}>
-                {status.tone === 'progress' && (
+                {(status.tone === 'progress' || project.uptime_status === 'down') && (
                   <span
                     className={cn(
                       'animate-ping absolute inline-flex h-full w-full rounded-full opacity-75',
@@ -179,7 +191,16 @@ export function ProjectCard({ project }: { project: Project }) {
                   className={cn('relative inline-flex rounded-full h-2 w-2', statusColor)}
                 ></span>
               </span>
-              <span className="font-medium text-foreground">{status.label}</span>
+              <span
+                className={cn(
+                  'font-medium',
+                  status.tone === 'error' && project.uptime_status === 'down'
+                    ? 'text-red-400'
+                    : 'text-foreground',
+                )}
+              >
+                {status.label}
+              </span>
 
               {status.timestamp && (
                 <>

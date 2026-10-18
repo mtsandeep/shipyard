@@ -120,9 +120,21 @@ function ProjectDetailsContent() {
       }
     };
 
+    const handleUptimeUpdated = (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data);
+        if (payload?.status) {
+          setProject((prev: any) => (prev ? { ...prev, uptime_status: payload.status } : prev));
+        }
+      } catch (err) {
+        console.error('[Project] Failed to parse uptime_updated SSE:', err);
+      }
+    };
+
     es.addEventListener('build_updated', handleBuildUpdated);
     es.addEventListener('deployment_updated', handleDeploymentUpdated);
     es.addEventListener('domain_status', handleDomainStatus);
+    es.addEventListener('uptime_updated', handleUptimeUpdated);
 
     es.onerror = (err) => {
       console.warn('[Project] SSE connection error, reconnecting automatically:', err);
@@ -132,6 +144,7 @@ function ProjectDetailsContent() {
       es.removeEventListener('build_updated', handleBuildUpdated);
       es.removeEventListener('deployment_updated', handleDeploymentUpdated);
       es.removeEventListener('domain_status', handleDomainStatus);
+      es.removeEventListener('uptime_updated', handleUptimeUpdated);
       es.close();
     };
   }, [id]);
@@ -222,40 +235,42 @@ function ProjectDetailsContent() {
 
       <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         <Tabs value={currentTab} onValueChange={handleTabChange} className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-5 justify-start rounded-xl border border-border bg-card p-1 sm:w-auto sm:inline-flex">
+          <TabsList className="grid h-auto w-full grid-cols-5 rounded-xl border border-border bg-card p-1 sm:w-auto sm:inline-flex">
             <TabsTrigger
               value="overview"
-              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+              className="flex flex-col items-center justify-center gap-1 rounded-lg py-2 px-1 text-[11px] font-medium leading-none sm:flex-row sm:gap-2 sm:px-3.5 sm:py-2 sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
             >
-              <LayoutDashboard className="h-4 w-4" />
+              <LayoutDashboard className="h-4 w-4 shrink-0" />
               <span>Overview</span>
             </TabsTrigger>
             <TabsTrigger
               value="deployments"
-              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+              className="flex flex-col items-center justify-center gap-1 rounded-lg py-2 px-1 text-[11px] font-medium leading-none sm:flex-row sm:gap-2 sm:px-3.5 sm:py-2 sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
             >
-              <Rocket className="h-4 w-4" />
-              <span>Deployments</span>
+              <Rocket className="h-4 w-4 shrink-0" />
+              <span className="sm:hidden">Deploys</span>
+              <span className="hidden sm:inline">Deployments</span>
             </TabsTrigger>
             <TabsTrigger
               value="environment"
-              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+              className="flex flex-col items-center justify-center gap-1 rounded-lg py-2 px-1 text-[11px] font-medium leading-none sm:flex-row sm:gap-2 sm:px-3.5 sm:py-2 sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
             >
-              <KeyRound className="h-4 w-4" />
-              <span>Environment</span>
+              <KeyRound className="h-4 w-4 shrink-0" />
+              <span className="sm:hidden">Env</span>
+              <span className="hidden sm:inline">Environment</span>
             </TabsTrigger>
             <TabsTrigger
               value="uptime"
-              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+              className="flex flex-col items-center justify-center gap-1 rounded-lg py-2 px-1 text-[11px] font-medium leading-none sm:flex-row sm:gap-2 sm:px-3.5 sm:py-2 sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
             >
-              <Activity className="h-4 w-4" />
+              <Activity className="h-4 w-4 shrink-0" />
               <span>Uptime</span>
             </TabsTrigger>
             <TabsTrigger
               value="settings"
-              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+              className="flex flex-col items-center justify-center gap-1 rounded-lg py-2 px-1 text-[11px] font-medium leading-none sm:flex-row sm:gap-2 sm:px-3.5 sm:py-2 sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
             >
-              <Settings2 className="h-4 w-4" />
+              <Settings2 className="h-4 w-4 shrink-0" />
               <span>Settings</span>
             </TabsTrigger>
           </TabsList>

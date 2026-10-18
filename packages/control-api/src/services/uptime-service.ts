@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
-import { and, asc, count, eq, isNull, lte } from 'drizzle-orm';
+import { and, asc, avg, count, eq, gte, isNull, lte, sql } from 'drizzle-orm';
 import { Job, Queue, Worker } from 'bullmq';
 import { db } from '../db';
 import {
@@ -11,6 +11,7 @@ import {
   uptimeMonitors,
   user,
 } from '../db/schema';
+import { EventStreamService } from './event-stream-service';
 
 const QUEUE_NAME = 'uptime-queue';
 const FAILURE_THRESHOLD = 2;
@@ -123,6 +124,115 @@ async function performCheck(endpoint: string, timeoutSeconds: number) {
   }
 }
 
+function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ${minutes % 60}m`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h ${minutes % 60}m`;
+}
+
+function buildAlertEmailHtml(params: {
+  projectName: string;
+  endpoint: string;
+  isDown: boolean;
+  occurredAt: string;
+  consecutiveFails: number;
+  downDuration: string | null;
+  dashboardLink: string;
+}): string {
+  const {
+    projectName,
+    endpoint,
+    isDown,
+    occurredAt,
+    consecutiveFails,
+    downDuration,
+    dashboardLink,
+  } = params;
+
+  const statusColor = isDown ? '#DC2626' : '#16A34A';
+  const statusDot = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${statusColor};margin-right:8px;vertical-align:middle"></span>`;
+  const heading = isDown ? `${projectName} is down` : `${projectName} is back up`;
+  const description = isDown
+    ? `Your endpoint is not responding. We detected consecutive failed health checks.`
+    : `Your endpoint is responding normally again.${downDuration ? ` Total downtime: ${downDuration}.` : ''}`;
+
+  const rows: [string, string][] = [
+    ['Project', projectName],
+    ['Endpoint', endpoint],
+    [isDown ? 'Detected at' : 'Recovered at', occurredAt],
+  ];
+  if (isDown) rows.push(['Failed checks', String(consecutiveFails)]);
+  if (!isDown && downDuration) rows.push(['Downtime', downDuration]);
+
+  const rowsHtml = rows
+    .map(
+      ([label, value], i) =>
+        `<tr>
+          <td style="padding:8px 0;color:#6B7280;font-size:14px;vertical-align:top${i < rows.length - 1 ? ';border-bottom:1px solid #E5E7EB' : ''}">${label}</td>
+          <td style="padding:8px 0;color:#111827;font-size:14px;text-align:right;vertical-align:top${i < rows.length - 1 ? ';border-bottom:1px solid #E5E7EB' : ''}">${label === 'Endpoint' ? `<a href="${value}" style="color:#2563EB;text-decoration:none">${value}</a>` : value}</td>
+        </tr>`,
+    )
+    .join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background-color:#F3F4F6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F3F4F6;padding:40px 16px">
+    <tr><td align="center">
+      <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%">
+
+        <tr><td style="padding-bottom:24px">
+          <span style="font-size:16px;font-weight:600;color:#111827">ShipYard</span>
+        </td></tr>
+
+        <tr><td>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+            style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:8px">
+            <tr><td style="padding:32px">
+
+              <p style="margin:0 0 4px 0;font-size:20px;font-weight:600;color:#111827;line-height:1.3">
+                ${statusDot}${heading}
+              </p>
+              <p style="margin:0 0 24px 0;font-size:14px;color:#6B7280;line-height:1.5">
+                ${description}
+              </p>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                ${rowsHtml}
+              </table>
+
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:24px">
+                <tr><td>
+                  <a href="${dashboardLink}"
+                    style="display:inline-block;background:#111827;color:#FFFFFF;font-size:13px;font-weight:500;text-decoration:none;padding:10px 20px;border-radius:6px">
+                    View in Dashboard
+                  </a>
+                </td></tr>
+              </table>
+
+            </td></tr>
+          </table>
+        </td></tr>
+
+        <tr><td style="padding-top:20px;text-align:center">
+          <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.5">
+            Sent by ShipYard uptime monitoring for ${projectName}.
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
 export const UptimeService = {
   queue: null as Queue<CheckJobData> | null,
   worker: null as Worker<CheckJobData> | null,
@@ -219,6 +329,9 @@ export const UptimeService = {
 
     const result = await performCheck(endpoint, monitor.timeout_seconds);
     const checkedAt = new Date();
+    let finalStatus: string | null = null;
+    let finalTransition: 'up' | 'down' | null = null;
+
     await db.transaction(async (tx) => {
       const current = await tx.query.uptimeMonitors.findFirst({
         where: eq(uptimeMonitors.id, monitor.id),
@@ -233,11 +346,18 @@ export const UptimeService = {
       let downSince = current.down_since;
       let transition: 'up' | 'down' | null = null;
 
+      // Server errors (5xx) are critical — alert immediately without waiting
+      // for FAILURE_THRESHOLD consecutive failures.
+      const isServerError = result.status_code !== null && result.status_code >= 500;
+
       if (result.success) {
         if (current.current_status === 'down') transition = 'up';
         status = 'up';
         downSince = null;
-      } else if (failures >= FAILURE_THRESHOLD && current.current_status !== 'down') {
+      } else if (
+        (isServerError || failures >= FAILURE_THRESHOLD) &&
+        current.current_status !== 'down'
+      ) {
         transition = 'down';
         status = 'down';
         downSince = checkedAt;
@@ -263,6 +383,9 @@ export const UptimeService = {
         });
       }
 
+      finalStatus = status;
+      finalTransition = transition;
+
       // Keep the check table bounded without adding a separate cleanup worker.
       const oldChecks = await tx
         .select({ count: count() })
@@ -277,12 +400,24 @@ export const UptimeService = {
         if (oldest) await tx.delete(uptimeChecks).where(eq(uptimeChecks.id, oldest.id));
       }
     });
+
+    if (finalStatus) {
+      EventStreamService.broadcastUptimeStatus(monitor.project_id, {
+        status: finalStatus,
+        transition: finalTransition,
+      });
+    }
   },
 
   async deliverPendingAlerts() {
     const apiKey = process.env.RESEND_API_KEY;
     const from = process.env.RESEND_FROM_EMAIL;
-    if (!apiKey || !from) return;
+    if (!apiKey || !from) {
+      console.warn(
+        '[Uptime] RESEND_API_KEY or RESEND_FROM_EMAIL not configured — skipping alert delivery',
+      );
+      return;
+    }
 
     const pending = await db
       .select({ alert: uptimeAlerts, monitor: uptimeMonitors, project: projects, account: user })
@@ -290,15 +425,11 @@ export const UptimeService = {
       .innerJoin(uptimeMonitors, eq(uptimeMonitors.id, uptimeAlerts.monitor_id))
       .innerJoin(projects, eq(projects.id, uptimeMonitors.project_id))
       .innerJoin(user, eq(user.id, projects.owner_id))
-      .where(
-        and(
-          isNull(uptimeAlerts.delivered_at),
-          lte(uptimeAlerts.attempts, 5),
-          eq(user.emailVerified, true),
-        ),
-      )
+      .where(and(isNull(uptimeAlerts.delivered_at), lte(uptimeAlerts.attempts, 5)))
       .orderBy(asc(uptimeAlerts.occurred_at))
       .limit(20);
+
+    const dashboardUrl = process.env.CLIENT_URL || 'https://deploy.thakur.dev';
 
     for (const { alert, monitor, project, account } of pending) {
       if (alert.delivered_at) continue;
@@ -306,9 +437,31 @@ export const UptimeService = {
         monitor.endpoint_url || (project.domain ? `https://${project.domain}` : 'your endpoint');
       const down = alert.status === 'down';
       const subject = down ? `${project.name} is down` : `${project.name} is back up`;
+      const occurredAtLocal = alert.occurred_at.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'medium',
+        timeStyle: 'long',
+      });
+      const downDuration =
+        down && monitor.down_since
+          ? formatDuration(alert.occurred_at.getTime() - monitor.down_since.getTime())
+          : null;
+      const consecutiveFails = monitor.consecutive_failures;
+
+      // Plain text fallback
       const text = down
-        ? `ShipYard could not reach ${endpoint} for ${project.name}. We detected ${FAILURE_THRESHOLD} consecutive failed checks at ${alert.occurred_at.toISOString()}.`
-        : `ShipYard can reach ${endpoint} again. ${project.name} recovered at ${alert.occurred_at.toISOString()}.`;
+        ? `[ShipYard Uptime Alert]\n\n${project.name} is DOWN.\n\nEndpoint: ${endpoint}\nDetected at: ${occurredAtLocal}\nConsecutive failures: ${consecutiveFails}\n\nView details: ${dashboardUrl}/projects/${project.id}?tab=uptime`
+        : `[ShipYard Uptime Alert]\n\n${project.name} has RECOVERED.\n\nEndpoint: ${endpoint}\nRecovered at: ${occurredAtLocal}${downDuration ? `\nTotal downtime: ${downDuration}` : ''}\n\nView details: ${dashboardUrl}/projects/${project.id}?tab=uptime`;
+
+      const html = buildAlertEmailHtml({
+        projectName: project.name,
+        endpoint,
+        isDown: down,
+        occurredAt: occurredAtLocal,
+        consecutiveFails,
+        downDuration,
+        dashboardLink: `${dashboardUrl}/projects/${project.id}?tab=uptime`,
+      });
 
       try {
         const response = await fetch('https://api.resend.com/emails', {
@@ -318,7 +471,7 @@ export const UptimeService = {
             'Content-Type': 'application/json',
             'Idempotency-Key': alert.id,
           },
-          body: JSON.stringify({ from, to: account.email, subject, text }),
+          body: JSON.stringify({ from, to: account.email, subject, html, text }),
           signal: AbortSignal.timeout(10_000),
         });
         if (!response.ok)
@@ -329,6 +482,7 @@ export const UptimeService = {
           .update(uptimeAlerts)
           .set({ delivered_at: new Date(), attempts: alert.attempts + 1, last_error: null })
           .where(eq(uptimeAlerts.id, alert.id));
+        console.log(`[Uptime] Alert ${alert.id} delivered to ${account.email}`);
       } catch (error) {
         await db
           .update(uptimeAlerts)
@@ -343,17 +497,49 @@ export const UptimeService = {
     }
   },
 
-  async getSettings(projectId: string) {
+  async getSettings(projectId: string, limit: number = 20) {
     const monitor = await db.query.uptimeMonitors.findFirst({
       where: eq(uptimeMonitors.project_id, projectId),
     });
     if (!monitor) return null;
+
     const history = await db.query.uptimeChecks.findMany({
       where: eq(uptimeChecks.monitor_id, monitor.id),
       orderBy: (checks, { desc }) => [desc(checks.checked_at)],
-      limit: 100,
+      limit,
     });
-    return { ...monitor, history };
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const summaryRows = await db
+      .select({
+        total_checks: count(),
+        successful_checks: count(sql`case when ${uptimeChecks.success} then 1 else null end`),
+        avg_latency_ms: avg(uptimeChecks.latency_ms),
+      })
+      .from(uptimeChecks)
+      .where(
+        and(eq(uptimeChecks.monitor_id, monitor.id), gte(uptimeChecks.checked_at, thirtyDaysAgo)),
+      );
+
+    const totalChecks = Number(summaryRows[0]?.total_checks ?? 0);
+    const successfulChecks = Number(summaryRows[0]?.successful_checks ?? 0);
+    const rawAvgLatency = summaryRows[0]?.avg_latency_ms;
+    const avgLatencyMs =
+      rawAvgLatency !== null && rawAvgLatency !== undefined
+        ? Math.round(Number(rawAvgLatency))
+        : null;
+    const uptimePercentage =
+      totalChecks > 0 ? Math.round((successfulChecks / totalChecks) * 1000) / 10 : null;
+
+    const summary = {
+      uptime_percentage: uptimePercentage,
+      avg_latency_ms: avgLatencyMs,
+      total_checks: totalChecks,
+      successful_checks: successfulChecks,
+      window_days: 30,
+    };
+
+    return { ...monitor, history, summary };
   },
 
   async updateSettings(

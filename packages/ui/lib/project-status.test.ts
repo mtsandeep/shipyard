@@ -110,4 +110,25 @@ describe('overview latest deployment status', () => {
     expect(result.timestamp).toBeNull();
     expect(result.tone).toBe('neutral');
   });
+
+  test('shows Down when deployment is active but uptime status is down', () => {
+    const result = getProjectStatus({
+      latest_build: build,
+      latest_deployment: { ...deployment, status: 'active', activated_at: newDate },
+      uptime_status: 'down',
+    });
+    expect(result.label).toBe('Down');
+    expect(result.tone).toBe('error');
+    expect(result.detail).toBe('Service is down (uptime monitor check failing)');
+  });
+
+  test('shows Ready when deployment is active and uptime status is up', () => {
+    const result = getProjectStatus({
+      latest_build: build,
+      latest_deployment: { ...deployment, status: 'active', activated_at: newDate },
+      uptime_status: 'up',
+    });
+    expect(result.label).toBe('Ready');
+    expect(result.tone).toBe('success');
+  });
 });

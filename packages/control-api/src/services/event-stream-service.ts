@@ -205,6 +205,19 @@ class EventStreamServiceClass {
       }
     }
   }
+
+  broadcastUptimeStatus(projectId: string, payload: any) {
+    const listeners = this.projectListeners.get(projectId);
+    if (!listeners || listeners.size === 0) return;
+    const sseMessage = formatSSE('uptime_updated', payload);
+    for (const listener of listeners) {
+      try {
+        listener(sseMessage);
+      } catch (err) {
+        console.error('[SSE] Failed to deliver uptime_updated to listener:', err);
+      }
+    }
+  }
 }
 
 export const EventStreamService = new EventStreamServiceClass();

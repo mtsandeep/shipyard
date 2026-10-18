@@ -35,9 +35,13 @@ export function UptimeOverviewCard({
   }, [projectId]);
 
   const history = settings?.history ?? [];
-  const successRate = history.length
-    ? Math.round((history.filter((check) => check.success).length / history.length) * 100)
-    : null;
+  const summary = settings?.summary;
+  const successRate =
+    summary?.uptime_percentage !== undefined
+      ? summary.uptime_percentage
+      : history.length
+        ? Math.round((history.filter((check) => check.success).length / history.length) * 100)
+        : null;
   const status = settings?.enabled ? settings.current_status : 'disabled';
   const statusLabel =
     status === 'up' ? 'Operational' : status === 'down' ? 'Experiencing issues' : 'Monitoring off';
@@ -71,7 +75,11 @@ export function UptimeOverviewCard({
 
       <div className="grid grid-cols-2 gap-4 border-t border-border pt-4">
         <div>
-          <p className="text-xs text-muted-foreground">Recent success rate</p>
+          <p className="text-xs text-muted-foreground">
+            {summary?.window_days
+              ? `Last ${summary.window_days}d success rate`
+              : 'Recent success rate'}
+          </p>
           <p className="mt-1 text-base font-semibold">
             {successRate === null ? '—' : `${successRate}%`}
           </p>

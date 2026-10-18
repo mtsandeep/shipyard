@@ -52,10 +52,14 @@ export const ProjectService = {
           status_message: latestDeployment.status_message,
           activated_at: latestDeployment.activated_at,
         },
+        uptime_status: sql<
+          string | null
+        >`case when ${uptimeMonitors.enabled} then ${uptimeMonitors.current_status} else null end`,
       })
       .from(projects)
       .leftJoinLateral(latestBuild, sql`true`)
       .leftJoinLateral(latestDeployment, sql`true`)
+      .leftJoin(uptimeMonitors, eq(uptimeMonitors.project_id, projects.id))
       .where(eq(projects.owner_id, ownerId));
   },
 

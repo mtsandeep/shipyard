@@ -92,10 +92,24 @@ export function OverviewTab({
           </p>
           <div className="flex items-center gap-2">
             <span
-              className={`h-2.5 w-2.5 rounded-full ${activeDeployment ? 'bg-emerald-500' : 'bg-muted-foreground'}`}
+              className={`h-2.5 w-2.5 rounded-full ${
+                activeDeployment
+                  ? project?.uptime_status === 'down'
+                    ? 'bg-red-500 animate-pulse'
+                    : 'bg-emerald-500'
+                  : 'bg-muted-foreground'
+              }`}
             />
-            <span className="text-lg font-semibold">
-              {activeDeployment ? 'Live' : 'Not deployed'}
+            <span
+              className={`text-lg font-semibold ${
+                activeDeployment && project?.uptime_status === 'down' ? 'text-red-400' : ''
+              }`}
+            >
+              {activeDeployment
+                ? project?.uptime_status === 'down'
+                  ? 'Service Down'
+                  : 'Live'
+                : 'Not deployed'}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
