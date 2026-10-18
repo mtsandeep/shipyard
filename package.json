@@ -7,29 +7,20 @@
   ],
   "scripts": {
     "test": "bun test",
-    "dev": "concurrently -n api,deploy,ui -c blue,magenta,cyan --kill-others \"bun run --filter '@thakur-deploy/control-api' dev\" \"bun run --filter '@thakur-deploy/deploy-engine' dev\" \"bun run --filter 'ui' dev\" 2>&1 | tee debug.log",
+    "dev": "bun run --filter '*' dev 2>&1 | tee debug.log",
     "generate": "bun run --filter '@thakur-deploy/control-api' generate",
     "migrate": "bun run --filter '@thakur-deploy/control-api' migrate",
-    "lint": "eslint .",
-    "format": "prettier --write .",
+    "lint": "bun lint",
+    "format": "bun fmt",
     "prepare": "husky",
     "build": "NODE_ENV=production PLATFORM_ENV=production bun run --filter '*' build"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
-    "@typescript-eslint/eslint-plugin": "^8.48.1",
-    "@typescript-eslint/parser": "^8.48.1",
     "bun-types": "latest",
-    "concurrently": "^9.2.1",
-    "eslint": "^9.39.1",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-prettier": "^5.5.4",
     "fast-check": "^3.15.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
-    "prettier": "^3.7.4",
-    "typescript": "^5.0.0",
-    "typescript-eslint": "^8.48.1",
+    "typescript": "^7.0.2",
     "vitest": "^1.0.0"
   }
 }

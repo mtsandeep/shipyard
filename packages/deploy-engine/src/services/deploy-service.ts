@@ -63,7 +63,7 @@ export const DeployService = {
     return { success: true, path };
   },
 
-  serveRequest() {
+  serveRequest(_req?: Request) {
     return new Response('Deploy Engine Running', { status: 200 });
   },
 

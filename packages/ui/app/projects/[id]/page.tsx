@@ -2,15 +2,20 @@
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api } from '@/lib/api';
-import { Loader2 } from 'lucide-react';
+import { Activity, KeyRound, LayoutDashboard, Loader2, Rocket, Settings2 } from 'lucide-react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DeploymentsTab } from './components/deployments-tab';
+import { EnvironmentTab } from './components/environment-tab';
 import { OverviewTab } from './components/overview-tab';
 import { ProjectHeader } from './components/project-header';
 import { SettingsTab } from './components/settings-tab';
+import { UptimeTab } from './components/uptime-tab';
+
+const VALID_TABS = ['overview', 'deployments', 'environment', 'uptime', 'settings'] as const;
+type TabType = (typeof VALID_TABS)[number];
 
 function ProjectDetailsContent() {
   const params = useParams();
@@ -18,8 +23,8 @@ function ProjectDetailsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const currentTab = ['overview', 'deployments', 'settings'].includes(requestedTab || '')
-    ? requestedTab!
+  const currentTab: TabType = VALID_TABS.includes(requestedTab as TabType)
+    ? (requestedTab as TabType)
     : 'overview';
 
   const [project, setProject] = useState<any>(null);
@@ -205,38 +210,57 @@ function ProjectDetailsContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-20">
       <ProjectHeader
         project={project}
         activeDeployment={activeDeployment}
+        deploymentStatus={deploymentStatus}
+        latestBuild={builds[0]}
         isDeploying={isDeploying}
         onTriggerBuild={triggerBuild}
       />
 
-      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+      <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         <Tabs value={currentTab} onValueChange={handleTabChange} className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-3 justify-start rounded-xl border border-border bg-card p-1 sm:w-[min(100%,560px)]">
+          <TabsList className="grid h-auto w-full grid-cols-5 justify-start rounded-xl border border-border bg-card p-1 sm:w-auto sm:inline-flex">
             <TabsTrigger
               value="overview"
-              className="h-9 rounded-lg px-3 data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
             >
-              Overview
+              <LayoutDashboard className="h-4 w-4" />
+              <span>Overview</span>
             </TabsTrigger>
             <TabsTrigger
               value="deployments"
-              className="h-9 rounded-lg px-3 data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
             >
-              Deployments
+              <Rocket className="h-4 w-4" />
+              <span>Deployments</span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="environment"
+              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+            >
+              <KeyRound className="h-4 w-4" />
+              <span>Environment</span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="uptime"
+              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+            >
+              <Activity className="h-4 w-4" />
+              <span>Uptime</span>
             </TabsTrigger>
             <TabsTrigger
               value="settings"
-              className="h-9 rounded-lg px-3 data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
+              className="gap-2 rounded-lg px-3 py-2 text-xs font-medium sm:text-sm data-[state=active]:bg-surface-muted data-[state=active]:text-foreground"
             >
-              Settings
+              <Settings2 className="h-4 w-4" />
+              <span>Settings</span>
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="mt-5">
+          <TabsContent value="overview" className="mt-6">
             <OverviewTab
               project={project}
               activeDeployment={activeDeployment}
@@ -245,6 +269,7 @@ function ProjectDetailsContent() {
               onTriggerBuild={triggerBuild}
               onActivateBuild={activateBuild}
               onOpenSettings={() => handleTabChange('settings')}
+              onOpenUptime={() => handleTabChange('uptime')}
               onViewDeployments={() => handleTabChange('deployments')}
               domainProvision={domainProvision}
               deploymentStatus={deploymentStatus}
@@ -252,7 +277,7 @@ function ProjectDetailsContent() {
             />
           </TabsContent>
 
-          <TabsContent value="deployments" className="mt-5">
+          <TabsContent value="deployments" className="mt-6">
             <DeploymentsTab
               builds={builds}
               onActivateBuild={activateBuild}
@@ -264,7 +289,15 @@ function ProjectDetailsContent() {
             />
           </TabsContent>
 
-          <TabsContent value="settings" className="mt-5">
+          <TabsContent value="environment" className="mt-6">
+            <EnvironmentTab project={project} />
+          </TabsContent>
+
+          <TabsContent value="uptime" className="mt-6">
+            <UptimeTab project={project} />
+          </TabsContent>
+
+          <TabsContent value="settings" className="mt-6">
             <SettingsTab project={project} />
           </TabsContent>
         </Tabs>

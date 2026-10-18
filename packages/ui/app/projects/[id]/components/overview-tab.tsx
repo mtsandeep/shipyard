@@ -26,6 +26,7 @@ interface OverviewTabProps {
   onTriggerBuild: () => void;
   onActivateBuild: (buildId: string) => void;
   onOpenSettings: () => void;
+  onOpenUptime?: () => void;
   onViewDeployments: () => void;
   domainProvision?: any;
   deploymentStatus?: any;
@@ -56,6 +57,7 @@ export function OverviewTab({
   onTriggerBuild,
   onActivateBuild,
   onOpenSettings,
+  onOpenUptime,
   onViewDeployments,
   domainProvision,
   deploymentStatus,
@@ -196,7 +198,11 @@ export function OverviewTab({
         </Card>
 
         <div className="grid gap-4">
-          <UptimeOverviewCard projectId={project.id} onOpenSettings={onOpenSettings} />
+          <UptimeOverviewCard
+            projectId={project.id}
+            onOpenUptime={onOpenUptime}
+            onOpenSettings={onOpenSettings}
+          />
           {domainProvision?.provisioned ? (
             <DomainStatusCard
               projectId={project.id}

@@ -9,11 +9,14 @@ import { Card } from '@/components/ui/card';
 
 export function UptimeOverviewCard({
   projectId,
+  onOpenUptime,
   onOpenSettings,
 }: {
   projectId: string;
-  onOpenSettings: () => void;
+  onOpenUptime?: () => void;
+  onOpenSettings?: () => void;
 }) {
+  const handleOpen = onOpenUptime || onOpenSettings || (() => {});
   const [settings, setSettings] = useState<UptimeSettings | null>(null);
 
   useEffect(() => {
@@ -94,9 +97,9 @@ export function UptimeOverviewCard({
         variant="ghost"
         size="sm"
         className="h-8 justify-between px-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
-        onClick={onOpenSettings}
+        onClick={handleOpen}
       >
-        Configure monitor <ArrowRight className="h-4 w-4" />
+        View uptime & history <ArrowRight className="h-4 w-4" />
       </Button>
     </Card>
   );

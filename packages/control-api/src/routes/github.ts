@@ -317,7 +317,7 @@ export const githubRoutes = new Elysia({ prefix: '/github' })
               },
             },
           );
-          const pkgJson = pkgRes.ok ? await pkgRes.json() : null;
+          const pkgJson = pkgRes.ok ? ((await pkgRes.json()) as any) : null;
           const rootFiles = rootContents.map((f) => f.name);
           const detected = detectFramework(rootFiles, pkgJson);
 
@@ -369,7 +369,7 @@ export const githubRoutes = new Elysia({ prefix: '/github' })
                 },
               },
             );
-            const pkgJson = pkgRes.ok ? await pkgRes.json() : null;
+            const pkgJson = pkgRes.ok ? ((await pkgRes.json()) as any) : null;
             const dirFiles = dirContents.map((f) => f.name);
             const detected = detectFramework(dirFiles, pkgJson);
 
@@ -413,7 +413,7 @@ export const githubRoutes = new Elysia({ prefix: '/github' })
                     },
                   },
                 );
-                const pkgJson = pkgRes.ok ? await pkgRes.json() : null;
+                const pkgJson = pkgRes.ok ? ((await pkgRes.json()) as any) : null;
                 const subFiles = subDirContents.map((f) => f.name);
                 const detected = detectFramework(subFiles, pkgJson);
 

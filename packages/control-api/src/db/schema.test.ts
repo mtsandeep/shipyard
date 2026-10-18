@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-import { fc } from '@fast-check/vitest';
+import { describe, it, expect } from 'bun:test';
+import fc from 'fast-check';
 import { db } from './index';
 import { projects, builds, deployments, environmentVariables } from './schema';
 import { eq } from 'drizzle-orm';

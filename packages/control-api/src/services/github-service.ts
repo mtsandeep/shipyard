@@ -8,7 +8,7 @@ interface GitHubInstallationToken {
   expires_at: string;
 }
 
-interface GitHubAppInfo {
+export interface GitHubAppInfo {
   /** App id as configured on the server (from GITHUB_APP_ID). */
   id: string;
   /** Public slug, e.g. "thakur-deploy". */

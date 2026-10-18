@@ -1,12 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import { EnvVarForm } from '@/components/env-var-form';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
-import { Trash2, AlertTriangle, GitBranch, Settings2, Save, Loader2 } from 'lucide-react';
+import { Trash2, GitBranch, Settings2, Save, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -31,14 +30,12 @@ import {
 
 import { Project } from '@/lib/types';
 import { FRAMEWORK_OPTIONS, AppType, isStaticFramework } from '@/lib/framework-config';
-import { UptimeSettingsCard } from './uptime-settings-card';
 
 interface SettingsTabProps {
   project: Project;
 }
 
 export function SettingsTab({ project }: SettingsTabProps) {
-  const [envVars, setEnvVars] = useState<any[]>([]);
   const router = useRouter();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [confirmName, setConfirmName] = useState('');
@@ -113,14 +110,6 @@ export function SettingsTab({ project }: SettingsTabProps) {
       setUpdating(false);
     }
   };
-
-  const loadData = () => {
-    api.getEnvVars(project.id).then(setEnvVars).catch(console.error);
-  };
-
-  useEffect(() => {
-    loadData();
-  }, [project.id]);
 
   const handleDelete = async () => {
     if (confirmName !== project.name) return;
@@ -269,21 +258,6 @@ export function SettingsTab({ project }: SettingsTabProps) {
             </CardHeader>
           </Card>
         )}
-
-        <UptimeSettingsCard projectId={project.id} />
-
-        {/* Environment Variables */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Environment Variables</CardTitle>
-            <CardDescription>
-              Define variables to be injected into your build and runtime environment.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <EnvVarForm projectId={project.id} initialVars={envVars} onUpdate={loadData} />
-          </CardContent>
-        </Card>
 
         {/* Danger Zone */}
         <Card className="border-red-500/20 bg-red-500/5 overflow-hidden">

@@ -1,0 +1,28 @@
+[fmt]
+printWidth = 100
+tabWidth = 2
+semi = true
+singleQuote = true
+trailingComma = "all"
+ignorePatterns = [
+  "node_modules",
+  "dist",
+  "build",
+  ".next",
+  ".bun",
+  "coverage",
+  "apps/**/builds",
+  "packages/deploy-engine/apps",
+]
+
+[lint]
+ignorePatterns = [
+  "node_modules",
+  "dist",
+  "build",
+  ".next",
+  ".bun",
+  "coverage",
+  "apps/**/builds",
+  "packages/deploy-engine/apps",
+]
