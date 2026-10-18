@@ -4,6 +4,10 @@ import { eq, desc } from 'drizzle-orm';
 import { DeploymentService } from './deployment-service';
 import { AppType } from '../config/framework-config';
 import { BuildQueue, type BuildJobData } from '../queue';
+import { ProjectService } from './project-service';
+import { EnvService } from './env-service';
+import { LogService } from './log-service';
+import { EventStreamService } from './event-stream-service';
 
 export const BuildService = {
   async create(data: {
@@ -24,10 +28,6 @@ export const BuildService = {
     const build = result[0];
 
     if (data.status === 'pending') {
-      const { ProjectService } = await import('./project-service');
-      const { EnvService } = await import('./env-service');
-      const { LogService } = await import('./log-service');
-
       const project = await ProjectService.getById(data.project_id);
       if (project) {
         const envVarsList = await EnvService.getAll(project.id);
@@ -204,9 +204,6 @@ export const BuildService = {
 
     // Auto-activate on successful builds
     if (status === 'success' && updated) {
-      const { LogService } = await import('./log-service');
-      const { WebSocketService } = await import('../ws');
-
       console.log(
         `[BuildService] Auto-activating successful build ${id} for project ${updated.project_id}`,
       );
@@ -214,7 +211,7 @@ export const BuildService = {
       // Log deployment start to build logs
       const startMsg = '🚀 Starting deployment activation...\n';
       await LogService.persist(id, startMsg, 'deploy');
-      WebSocketService.broadcast(id, startMsg, 'deploy');
+      EventStreamService.broadcast(id, startMsg, 'deploy');
 
       try {
         await DeploymentService.activateBuild(updated.project_id, id);
@@ -223,7 +220,7 @@ export const BuildService = {
         // Log success to build logs
         const successMsg = '✅ Deployment activated successfully!\n';
         await LogService.persist(id, successMsg, 'deploy');
-        WebSocketService.broadcast(id, successMsg, 'deploy');
+        EventStreamService.broadcast(id, successMsg, 'deploy');
       } catch (e: any) {
         const errorMsg = e?.message || 'Unknown error';
         console.error(`[BuildService] Auto-activation failed for build ${id}:`, e);
@@ -231,7 +228,7 @@ export const BuildService = {
         // Log error to build logs so users can see it
         const failMsg = `❌ Auto-deployment activation failed: ${errorMsg}\nPlease try activating manually.\n`;
         await LogService.persist(id, failMsg, 'error');
-        WebSocketService.broadcast(id, failMsg, 'error');
+        EventStreamService.broadcast(id, failMsg, 'error');
 
         // Don't re-throw - build was successful, just activation failed
       }

@@ -6,6 +6,8 @@ import { projects, builds, deployments } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { ProjectAccessService } from '../services/project-access-service';
 import { isStaticFramework } from '../config/framework-config';
+import { EventStreamService } from '../services/event-stream-service';
+import { DeploymentService } from '../services/deployment-service';
 
 export const domainsRoutes = new Elysia({ prefix: '/domains' })
   .get(
@@ -107,15 +109,12 @@ export const domainsRoutes = new Elysia({ prefix: '/domains' })
 
       const subdomain = project.domain.split('.')[0];
 
-      // Import WebSocket for status broadcasting
-      const { WebSocketService } = await import('../ws');
-
       const result = await DomainService.provision(
         projectId,
         subdomain,
         isStaticFramework(project.app_type) ? null : project.port,
         async (step, message) => {
-          WebSocketService.broadcastDomainStatus(projectId, {
+          EventStreamService.broadcastDomainStatus(projectId, {
             step,
             message,
             project_id: projectId,
@@ -156,13 +155,11 @@ export const domainsRoutes = new Elysia({ prefix: '/domains' })
         return { error: 'Project has no port assigned' };
       }
 
-      const { WebSocketService } = await import('../ws');
-
       const result = await DomainService.retry(
         projectId,
         isStaticFramework(project.app_type) ? null : project.port,
         async (step, message) => {
-          WebSocketService.broadcastDomainStatus(projectId, {
+          EventStreamService.broadcastDomainStatus(projectId, {
             step,
             message,
             project_id: projectId,
@@ -187,7 +184,6 @@ export const domainsRoutes = new Elysia({ prefix: '/domains' })
         });
 
         if (!activeDeployment) {
-          const { DeploymentService } = await import('../services/deployment-service');
           console.log(
             `[DomainRetry] Domain provision retry succeeded. Automatically activating latest successful build ${latestSuccessBuild.id}`,
           );

@@ -6,7 +6,6 @@ import { LogLevel } from '@/lib/types';
 import { useLogStore } from '@/stores/log-store';
 import { ArrowDownCircle, Loader2 } from 'lucide-react';
 import { UIEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { io, Socket } from 'socket.io-client';
 import { toast } from 'sonner';
 
 import { LogActions } from './log-actions';
@@ -32,7 +31,6 @@ export function LogViewer({ buildId }: LogViewerProps) {
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
   const [showSearch, setShowSearch] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<LogLevel>>(new Set());
-  const socketRef = useRef<Socket | null>(null);
 
   // Count errors and warnings
   const { errorCount, warningCount } = useMemo(() => {
@@ -145,16 +143,13 @@ export function LogViewer({ buildId }: LogViewerProps) {
     };
   }, [buildId, setLogs]);
 
-  // Socket connection (history-first, with backfill on every connect)
+  // SSE stream connection (history-first, with backfill on every connect)
   useEffect(() => {
     if (!historyReady) return;
 
-    socketRef.current = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000');
-    const socket = socketRef.current;
-
-    // Backfill anything persisted between the history fetch and the room join
+    // Backfill anything persisted between the history fetch and the stream connect
     // (and anything missed across reconnects). Merges by id so live lines are
-    // never rendered twice: WS payloads now carry the real row id/timestamp.
+    // never rendered twice.
     const backfill = async () => {
       try {
         const entries = useLogStore.getState().logs[buildId] || [];
@@ -169,43 +164,37 @@ export function LogViewer({ buildId }: LogViewerProps) {
       }
     };
 
-    const subscribe = () => {
-      console.log(`[LogViewer] Subscribing to build: ${buildId}`);
-      socket.emit('subscribe_build', buildId);
+    const streamUrl = api.getBuildLogsStreamUrl(buildId);
+    const es = new EventSource(streamUrl, { withCredentials: true });
+
+    es.onopen = () => {
+      console.log(`[LogViewer] SSE connected for build: ${buildId}`);
       void backfill();
     };
 
-    if (socket.connected) {
-      subscribe();
-    }
-    socket.on('connect', subscribe);
-
-    const onBuildLog = (message: {
-      buildId: string;
-      data: string;
-      level?: LogLevel;
-      id?: string;
-      timestamp?: string;
-    }) => {
-      if (message.buildId === buildId) {
-        appendLog(buildId, message.data, message.level || 'info', {
-          id: message.id,
-          timestamp: message.timestamp,
-        });
+    const onBuildLog = (event: MessageEvent) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.buildId === buildId) {
+          appendLog(buildId, message.data, message.level || 'info', {
+            id: message.id,
+            timestamp: message.timestamp,
+          });
+        }
+      } catch (err) {
+        console.error('[LogViewer] Failed to parse SSE build_log:', err);
       }
     };
 
-    socket.on('build_log', onBuildLog);
+    es.addEventListener('build_log', onBuildLog);
+
+    es.onerror = (err) => {
+      console.warn('[LogViewer] SSE error, reconnecting automatically:', err);
+    };
 
     return () => {
-      socket.emit('unsubscribe_build', buildId);
-      socket.off('connect', subscribe);
-      socket.off('build_log', onBuildLog);
-      // Close the socket instead of leaving a connected-but-unlistened one
-      // behind; a leaked socket per Sheet open hangs one long-poll open and
-      // can exhaust browser/proxy connection pools on flaky networks.
-      socket.disconnect();
-      if (socketRef.current === socket) socketRef.current = null;
+      es.removeEventListener('build_log', onBuildLog);
+      es.close();
     };
   }, [buildId, historyReady, appendLog, mergeLogs]);
 

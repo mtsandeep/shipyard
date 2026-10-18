@@ -1,11 +1,10 @@
 import { Elysia } from 'elysia';
-import { BuildService } from '../services/build-service';
-import { ProjectService } from '../services/project-service';
-import { LogService } from '../services/log-service';
-import { WebSocketService } from '../ws';
 import { LogLevel } from '../db/schema';
 import { BuildQueue } from '../queue';
+import { BuildService } from '../services/build-service';
+import { LogService } from '../services/log-service';
 import { ProjectAccessService } from '../services/project-access-service';
+import { EventStreamService } from '../services/event-stream-service';
 
 export const buildsRoutes = new Elysia()
   .group('/projects/:id/builds', (app) =>
@@ -81,6 +80,14 @@ export const buildsRoutes = new Elysia()
         }
         return await LogService.getLogs(id);
       })
+      .get('/:id/logs/stream', async ({ params: { id }, request, set }) => {
+        const build = await BuildService.getById(id);
+        if (!build || !(await ProjectAccessService.getOwnedProject(request, build.project_id))) {
+          set.status = 404;
+          return { error: 'Build not found' };
+        }
+        return EventStreamService.subscribeBuild(id);
+      })
       .delete('/:id/logs', async ({ params: { id }, request, set }) => {
         const build = await BuildService.getById(id);
         if (!build || !(await ProjectAccessService.getOwnedProject(request, build.project_id))) {
@@ -104,7 +111,7 @@ export const buildsRoutes = new Elysia()
             set.status = 404;
             return { error: 'Build not found' };
           }
-          WebSocketService.broadcastBuildUpdate(deleted.project_id, {
+          EventStreamService.broadcastBuildUpdate(deleted.project_id, {
             id,
             deleted: true,
           });
@@ -123,7 +130,7 @@ export const internalBuildRoutes = new Elysia().group('/builds', (app) =>
       // Persist first so the DB is the source of truth, then broadcast with the
       // real row id/timestamp so clients can de-duplicate on backfill.
       const row = await LogService.persist(id, logs, level || 'info');
-      WebSocketService.broadcast(id, logs, level || 'info', {
+      EventStreamService.broadcast(id, logs, level || 'info', {
         id: row.id,
         timestamp: row.timestamp.toISOString(),
       });
@@ -134,7 +141,7 @@ export const internalBuildRoutes = new Elysia().group('/builds', (app) =>
       const updated = await BuildService.updateStatus(id, status as any);
 
       if (updated) {
-        WebSocketService.broadcastBuildUpdate(updated.project_id, updated);
+        EventStreamService.broadcastBuildUpdate(updated.project_id, updated);
       }
       return updated;
     }),

@@ -5,7 +5,6 @@ import { api } from '@/lib/api';
 import { Loader2 } from 'lucide-react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { io } from 'socket.io-client';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DeploymentsTab } from './components/deployments-tab';
@@ -51,63 +50,84 @@ function ProjectDetailsContent() {
   useEffect(() => {
     if (!id) return;
     refreshData();
-    const socket = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000');
 
-    socket.on('connect', () => {
-      console.log('Socket Connected to Project Room');
-      socket.emit('subscribe_project', id);
-    });
+    const streamUrl = api.getProjectEventsStreamUrl(id);
+    const es = new EventSource(streamUrl, { withCredentials: true });
 
-    socket.on('build_updated', (updatedBuild: any) => {
-      setBuilds((prev) => {
-        const exists = prev.find((b) => b.id === updatedBuild.id);
-        if (exists) {
-          return prev.map((b) => (b.id === updatedBuild.id ? updatedBuild : b));
+    es.onopen = () => {
+      console.log(`[Project] Connected to SSE for project: ${id}`);
+    };
+
+    const handleBuildUpdated = (e: MessageEvent) => {
+      try {
+        const updatedBuild = JSON.parse(e.data);
+        setBuilds((prev) => {
+          const exists = prev.find((b) => b.id === updatedBuild.id);
+          if (exists) {
+            return prev.map((b) => (b.id === updatedBuild.id ? updatedBuild : b));
+          }
+          return [updatedBuild, ...prev];
+        });
+        if (updatedBuild.status === 'success') {
+          api.getActiveDeployment(id).then(setActiveDeployment).catch(console.error);
+          toast.success(`Build #${updatedBuild.id.slice(0, 8)} succeeded`);
+        } else if (updatedBuild.status === 'failed') {
+          toast.error(`Build #${updatedBuild.id.slice(0, 8)} failed`);
         }
-        return [updatedBuild, ...prev];
-      });
-      if (updatedBuild.status === 'success') {
+      } catch (err) {
+        console.error('[Project] Failed to parse build_updated SSE:', err);
+      }
+    };
+
+    const handleDeploymentUpdated = (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data);
+        setDeploymentStatus(payload);
+
+        api.getBuilds(id).then(setBuilds).catch(console.error);
         api.getActiveDeployment(id).then(setActiveDeployment).catch(console.error);
-        toast.success(`Build #${updatedBuild.id.slice(0, 8)} succeeded`);
-      } else if (updatedBuild.status === 'failed') {
-        toast.error(`Build #${updatedBuild.id.slice(0, 8)} failed`);
+
+        if (payload?.status === 'active') {
+          toast.success('Deployment activated');
+          setDeploymentStatus(null);
+          api.getDomainStatus(id).then(setDomainProvision).catch(console.error);
+        } else if (payload?.status === 'failed') {
+          toast.error(payload?.status_message || 'Deployment failed');
+        } else if (payload?.status === 'dns_creating') {
+          toast.info('Setting up DNS...');
+        } else if (payload?.status === 'ssl_issuing') {
+          toast.info('Issuing SSL certificate...');
+        } else if (payload?.status === 'app_starting') {
+          toast.info('Starting application...');
+        }
+      } catch (err) {
+        console.error('[Project] Failed to parse deployment_updated SSE:', err);
       }
-    });
+    };
 
-    socket.on('deployment_updated', (payload: any) => {
-      // Track real-time deployment status for pipeline visualization
-      setDeploymentStatus(payload);
-
-      // Refresh builds to get updated deployment status (now included via JOIN)
-      api.getBuilds(id).then(setBuilds).catch(console.error);
-      api.getActiveDeployment(id).then(setActiveDeployment).catch(console.error);
-
-      // Show appropriate toast based on deployment status
-      if (payload?.status === 'active') {
-        toast.success('Deployment activated');
-        setDeploymentStatus(null); // Clear pipeline once active
-        // Refresh domain status too
+    const handleDomainStatus = (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data);
+        console.log('Domain status update:', payload);
         api.getDomainStatus(id).then(setDomainProvision).catch(console.error);
-      } else if (payload?.status === 'failed') {
-        toast.error(payload?.status_message || 'Deployment failed');
-      } else if (payload?.status === 'dns_creating') {
-        toast.info('Setting up DNS...');
-      } else if (payload?.status === 'ssl_issuing') {
-        toast.info('Issuing SSL certificate...');
-      } else if (payload?.status === 'app_starting') {
-        toast.info('Starting application...');
+      } catch (err) {
+        console.error('[Project] Failed to parse domain_status SSE:', err);
       }
-    });
+    };
 
-    socket.on('domain_status', (payload: any) => {
-      // Update domain provision status in real-time
-      console.log('Domain status update:', payload);
-      api.getDomainStatus(id).then(setDomainProvision).catch(console.error);
-    });
+    es.addEventListener('build_updated', handleBuildUpdated);
+    es.addEventListener('deployment_updated', handleDeploymentUpdated);
+    es.addEventListener('domain_status', handleDomainStatus);
+
+    es.onerror = (err) => {
+      console.warn('[Project] SSE connection error, reconnecting automatically:', err);
+    };
 
     return () => {
-      socket.emit('unsubscribe_project', id);
-      socket.disconnect();
+      es.removeEventListener('build_updated', handleBuildUpdated);
+      es.removeEventListener('deployment_updated', handleDeploymentUpdated);
+      es.removeEventListener('domain_status', handleDomainStatus);
+      es.close();
     };
   }, [id]);
 

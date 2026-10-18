@@ -1,6 +1,6 @@
 import { Queue, QueueEvents, Job } from 'bullmq';
 import { QUEUE_CONFIG } from './config';
-import { WebSocketService } from '../ws';
+import { EventStreamService } from '../services/event-stream-service';
 import { AppType } from '../config/framework-config';
 
 /**
@@ -98,7 +98,7 @@ export const BuildQueue = {
         const position = await this.getJobPosition(jobId);
         const stats = await this.getStats();
 
-        WebSocketService.broadcast(
+        EventStreamService.broadcast(
           job.data.build_id,
           `🔄 Build queued (position ${position} of ${stats.waiting + stats.active})\n`,
           'info',
@@ -109,7 +109,7 @@ export const BuildQueue = {
     queueEvents.on('active', async ({ jobId }) => {
       const job = await this.getJob(jobId);
       if (job) {
-        WebSocketService.broadcast(
+        EventStreamService.broadcast(
           job.data.build_id,
           `🚀 Build started - worker picked up the job\n`,
           'info',
@@ -131,7 +131,7 @@ export const BuildQueue = {
     queueEvents.on('stalled', async ({ jobId }) => {
       const job = await this.getJob(jobId);
       if (job) {
-        WebSocketService.broadcast(
+        EventStreamService.broadcast(
           job.data.build_id,
           `⚠️ Build stalled - will be retried\n`,
           'warning',

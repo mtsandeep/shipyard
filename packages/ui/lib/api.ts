@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4010';
 
 import { Project, Build, Deployment, EnvVar, LogEntry, UptimeSettings } from '@/lib/types';
 
@@ -415,5 +415,14 @@ export const api = {
       throw new Error(error.error || error.message || 'Failed to retry domain provision');
     }
     return res.json();
+  },
+
+  // SSE Realtime Streams
+  getBuildLogsStreamUrl: (buildId: string): string => {
+    return `${API_URL}/builds/${encodeURIComponent(buildId)}/logs/stream`;
+  },
+
+  getProjectEventsStreamUrl: (projectId: string): string => {
+    return `${API_URL}/projects/${encodeURIComponent(projectId)}/events`;
   },
 };

@@ -8,6 +8,7 @@ import { deployments } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { DeploymentService } from '../services/deployment-service';
 import { AppType, APP_TYPES, isStaticFramework } from '../config/framework-config';
+import { EventStreamService } from '../services/event-stream-service';
 
 const appTypeSchema = t.Union(
   APP_TYPES.map((type) => t.Literal(type)) as [
@@ -100,6 +101,14 @@ export const projectsRoutes = new Elysia({ prefix: '/projects' })
       return { error: 'Project not found' };
     }
     return project;
+  })
+  .get('/:id/events', async ({ params: { id }, request, set }) => {
+    const project = await ProjectAccessService.getOwnedProject(request, id);
+    if (!project) {
+      set.status = 404;
+      return { error: 'Project not found' };
+    }
+    return EventStreamService.subscribeProject(id);
   })
   .put(
     '/:id',
