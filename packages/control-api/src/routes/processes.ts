@@ -28,6 +28,38 @@ interface RawPM0Process {
   [key: string]: unknown;
 }
 
+interface RawPM0SystemStats {
+  cpu_cores?: number;
+  load_1?: number;
+  load_5?: number;
+  load_15?: number;
+  has_load?: boolean;
+  memory_total_bytes?: number;
+  memory_used_bytes?: number;
+  memory_used_pct?: number;
+  has_memory?: boolean;
+}
+
+interface RawPM0ListResponse {
+  processes?: RawPM0Process[];
+  system?: RawPM0SystemStats | null;
+}
+
+function sanitizeSystem(system?: RawPM0SystemStats | null) {
+  if (!system) return null;
+  return {
+    cpu_cores: system.cpu_cores ?? 0,
+    load_1: system.load_1 ?? 0,
+    load_5: system.load_5 ?? 0,
+    load_15: system.load_15 ?? 0,
+    has_load: system.has_load ?? false,
+    memory_total_bytes: system.memory_total_bytes ?? 0,
+    memory_used_bytes: system.memory_used_bytes ?? 0,
+    memory_used_pct: system.memory_used_pct ?? 0,
+    has_memory: system.has_memory ?? false,
+  };
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
@@ -98,11 +130,27 @@ export const processesRoutes = new Elysia().group('/pm0', (app) =>
       }
     })
 
-    // List all processes (sanitized)
-    .get('/processes', async ({ set }) => {
+    // List all processes (sanitized). Pass ?system=true for host telemetry.
+    .get('/processes', async ({ query, set }) => {
       try {
-        const procs = (await pm0Fetch('/processes')) as RawPM0Process[];
-        return (procs ?? []).map(sanitizeProcess);
+        const withSystem = query?.system === 'true' || query?.system === '1';
+
+        if (!withSystem) {
+          const procs = (await pm0Fetch('/processes')) as RawPM0Process[];
+          return (procs ?? []).map(sanitizeProcess);
+        }
+
+        const data = (await pm0Fetch('/processes?system=true')) as
+          RawPM0ListResponse | RawPM0Process[];
+
+        if (Array.isArray(data)) {
+          return { processes: data.map(sanitizeProcess), system: null };
+        }
+
+        return {
+          processes: (data.processes ?? []).map(sanitizeProcess),
+          system: sanitizeSystem(data.system),
+        };
       } catch (e: unknown) {
         set.status = 502;
         return { error: getErrorMessage(e) };
@@ -232,6 +280,32 @@ export const processesRoutes = new Elysia().group('/pm0', (app) =>
       } catch (e: unknown) {
         set.status = 502;
         return { error: getErrorMessage(e) };
+      }
+    })
+
+    // Clear logs (truncates files and drops the in-memory backlog)
+    .post('/processes/:target/logs/clear', async ({ params: { target }, set }) => {
+      try {
+        return await pm0Fetch(`/processes/${encodeURIComponent(target)}/logs/clear`, {
+          method: 'POST',
+        });
+      } catch (e: unknown) {
+        const errorMsg = getErrorMessage(e);
+        set.status = errorMsg.includes('no matching') ? 404 : 500;
+        return { error: errorMsg };
+      }
+    })
+
+    // DELETE is an equivalent alias for clearing logs
+    .delete('/processes/:target/logs', async ({ params: { target }, set }) => {
+      try {
+        return await pm0Fetch(`/processes/${encodeURIComponent(target)}/logs`, {
+          method: 'DELETE',
+        });
+      } catch (e: unknown) {
+        const errorMsg = getErrorMessage(e);
+        set.status = errorMsg.includes('no matching') ? 404 : 500;
+        return { error: errorMsg };
       }
     }),
 );

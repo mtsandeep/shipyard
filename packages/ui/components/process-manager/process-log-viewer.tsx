@@ -3,8 +3,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { X, Pause, Play, Download, Trash2 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { X, Pause, Play, Download, Trash2, Loader2 } from 'lucide-react';
 import { pm0Api } from '@/lib/pm0-api';
+import { toast } from 'sonner';
 
 interface LogLine {
   pm_id: number;
@@ -23,6 +35,8 @@ export function ProcessLogViewer({ target, processName, onClose }: ProcessLogVie
   const [lines, setLines] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [streamKey, setStreamKey] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const pausedRef = useRef(false);
@@ -62,7 +76,7 @@ export function ProcessLogViewer({ target, processName, onClose }: ProcessLogVie
       es.close();
       eventSourceRef.current = null;
     };
-  }, [target]);
+  }, [target, streamKey]);
 
   // Auto-scroll
   useEffect(() => {
@@ -82,8 +96,23 @@ export function ProcessLogViewer({ target, processName, onClose }: ProcessLogVie
     URL.revokeObjectURL(url);
   };
 
+  const clearLogs = async () => {
+    setClearing(true);
+    try {
+      const result = await pm0Api.clearLogs(target);
+      setLines([]);
+      setStreamKey((key) => key + 1);
+      toast.success(`Cleared ${result.cleared_files} log file(s)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to clear logs: ${message}`);
+    } finally {
+      setClearing(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-console-border bg-console">
+    <div className="flex flex-col overflow-hidden bg-console">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-console-border px-4 py-2.5">
         <div className="flex items-center gap-3">
@@ -109,15 +138,41 @@ export function ProcessLogViewer({ target, processName, onClose }: ProcessLogVie
           >
             {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
           </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="text-console-muted hover:text-console-foreground hover:bg-console-surface"
-            onClick={() => setLines([])}
-            title="Clear"
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-console-muted hover:text-console-foreground hover:bg-console-surface"
+                disabled={clearing}
+                title="Clear logs"
+              >
+                {clearing ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="size-3.5" />
+                )}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear logs?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This permanently empties all stdout/stderr files (including rotated copies) for{' '}
+                  <strong>{processName}</strong> and resets the in-memory backlog.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  onClick={clearLogs}
+                >
+                  Clear logs
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <Button
             variant="ghost"
             size="icon-sm"

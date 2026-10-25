@@ -33,6 +33,29 @@ export interface PM0Health {
   cgroup_warning: string;
 }
 
+export interface PM0SystemStats {
+  cpu_cores: number;
+  load_1: number;
+  load_5: number;
+  load_15: number;
+  has_load: boolean;
+  memory_total_bytes: number;
+  memory_used_bytes: number;
+  memory_used_pct: number;
+  has_memory: boolean;
+}
+
+export interface PM0ProcessListResponse {
+  processes: PM0Process[];
+  system: PM0SystemStats | null;
+}
+
+export interface PM0ClearLogsResult {
+  ok: boolean;
+  affected_pm_ids: number[];
+  cleared_files: number;
+}
+
 export interface PM0ActionResult {
   ok: boolean;
   affected_pm_ids: number[];
@@ -61,6 +84,24 @@ export const pm0Api = {
       throw new Error(err.error || 'Failed to fetch processes');
     }
     return res.json();
+  },
+
+  async getProcessesWithSystem(): Promise<PM0ProcessListResponse> {
+    const res = await fetch(`${API_URL}/pm0/processes?system=true`, {
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to fetch processes' }));
+      throw new Error(err.error || 'Failed to fetch processes');
+    }
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      return { processes: data, system: null };
+    }
+    return {
+      processes: data.processes ?? [],
+      system: data.system ?? null,
+    };
   },
 
   async getProcess(target: string): Promise<PM0Process> {
@@ -130,6 +171,18 @@ export const pm0Api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed to save dump' }));
       throw new Error(err.error || 'Failed to save dump');
+    }
+    return res.json();
+  },
+
+  async clearLogs(target: string): Promise<PM0ClearLogsResult> {
+    const res = await fetch(`${API_URL}/pm0/processes/${encodeURIComponent(target)}/logs/clear`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to clear logs' }));
+      throw new Error(err.error || 'Failed to clear logs');
     }
     return res.json();
   },
