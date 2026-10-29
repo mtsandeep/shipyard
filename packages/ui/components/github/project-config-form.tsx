@@ -38,6 +38,9 @@ import {
 } from '@/lib/framework-config';
 import { cn } from '@/lib/utils';
 
+// Matches the API's BASE_DOMAIN default; override per environment at build time.
+const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'thakur.dev';
+
 interface ProjectConfigFormProps {
   repo: GitRepository;
   loading: boolean;
@@ -366,7 +369,7 @@ export function ProjectConfigForm({
                 className="text-right bg-surface-muted/60 border-border rounded-r-none rounded-l-xl border-r-0"
               />
               <div className="bg-surface-muted border border-border border-l-0 px-3 h-10 flex items-center rounded-r-xl">
-                <span className="text-muted-foreground text-sm whitespace-nowrap">.thakur.dev</span>
+                <span className="text-muted-foreground text-sm whitespace-nowrap">.{BASE_DOMAIN}</span>
               </div>
             </div>
             <Button

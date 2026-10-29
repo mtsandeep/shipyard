@@ -11,6 +11,9 @@ import { FolderPicker } from '@/components/github/folder-picker';
 import { GitBranch, User, Settings2, FolderOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+// Matches the API's BASE_DOMAIN default; override per environment at build time.
+const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'thakur.dev';
+
 interface SelectedFolder {
   path: string;
   name: string;
@@ -110,7 +113,7 @@ export default function ImportPage() {
         build_command: config.buildCommand,
         app_type: config.appType,
         root_directory: config.rootDirectory,
-        domain: config.domain ? `${config.domain}.thakur.dev` : '',
+        domain: config.domain ? `${config.domain}.${BASE_DOMAIN}` : '',
         port: config.port,
         github_repo_id: selectedRepo.id.toString(),
         github_repo_full_name: selectedRepo.full_name,

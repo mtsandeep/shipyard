@@ -26,6 +26,9 @@ import {
   isStaticFramework,
 } from '@/lib/framework-config';
 
+// Matches the API's BASE_DOMAIN default; override per environment at build time.
+const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'thakur.dev';
+
 export function ManualProjectForm() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -158,7 +161,7 @@ export function ManualProjectForm() {
       const project = await api.createProject({
         ...formData,
         port: !isStatic && formData.port ? parseInt(formData.port, 10) : undefined,
-        domain: formData.domain ? `${formData.domain}.thakur.dev` : '',
+        domain: formData.domain ? `${formData.domain}.${BASE_DOMAIN}` : '',
         env_vars: envVarsRecord,
       });
       router.push(`/projects/${project.id}`);
@@ -267,7 +270,7 @@ export function ManualProjectForm() {
                     }}
                     className="text-right"
                   />
-                  <span className="text-muted-foreground whitespace-nowrap">.thakur.dev</span>
+                  <span className="text-muted-foreground whitespace-nowrap">.{BASE_DOMAIN}</span>
                 </div>
                 <Button
                   type="button"
