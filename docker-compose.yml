@@ -1,0 +1,104 @@
+name: shipyard
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shipyard
+      POSTGRES_PASSWORD: shipyard
+      POSTGRES_DB: shipyard
+    volumes:
+      - shipyard-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U shipyard -d shipyard']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: .
+    # Apply DB migrations, then boot the API.
+    command: sh -c "cd packages/control-api && bun src/db/migrate.ts && bun dist/index.js"
+    env_file: .env.docker
+    environment:
+      NODE_ENV: production
+      PORT: '4010'
+      DATABASE_URL: postgres://shipyard:shipyard@db:5432/shipyard
+      REDIS_URL: redis://redis:6379/0
+      DEPLOY_ENGINE_URL: http://engine:4012
+      # pm0 daemon REST API lives in the engine container (see PM0_HTTP_ADDR).
+      PM0_API_URL: http://engine:9615/api/v1
+    ports:
+      - '4010:4010'
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:4010/']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  engine:
+    build: .
+    command: sh -c "cd packages/deploy-engine && bun dist/index.js"
+    env_file: .env.docker
+    environment:
+      NODE_ENV: production
+      PLATFORM_ENV: development
+      PORT: '4012'
+      REDIS_URL: redis://redis:6379/0
+      CONTROL_API_URL: http://api:4010
+      DASHBOARD_ORIGIN: http://localhost:4013
+      USE_DOCKER: 'true'
+      # App containers publish ports on the host; probe them via the host
+      # gateway instead of this container's loopback.
+      DOCKER_HEALTHCHECK_HOST: host.docker.internal
+      BASE_DIR: /var/lib/shipyard/apps
+      # Expose pm0's REST dashboard API on the compose network (off by default).
+      PM0_HTTP_ADDR: 0.0.0.0:9615
+      PORT_RANGE_START: '5000'
+      PORT_RANGE_END: '6000'
+    volumes:
+      - shipyard-apps:/var/lib/shipyard/apps
+      # pm0 process state (dump for resurrect on engine restart)
+      - shipyard-pm0:/root/.pm0
+      # Host Docker daemon for USE_DOCKER=true app deployments (sibling containers)
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Host access to the pm0-mode app on 5000 only. Docker-mode deployments
+    # are sibling containers that publish their own host ports (5001+), which
+    # this range publishing would collide with.
+    ports:
+      - '5000:5000'
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  ui:
+    build: .
+    command: sh -c "cd packages/ui && bun run start"
+    environment:
+      NODE_ENV: production
+      PORT: '4013'
+    ports:
+      - '4013:4013'
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  shipyard-db:
+  shipyard-apps:
+  shipyard-pm0:

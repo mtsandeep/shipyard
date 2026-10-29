@@ -16,3 +16,6 @@ packages/*/bin/
 *.pem
 server.pid
 debug.log
+
+# Docker compose runtime env (see .env.docker.example)
+.env.docker
