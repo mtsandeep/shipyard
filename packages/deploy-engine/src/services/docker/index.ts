@@ -203,12 +203,16 @@ export const DockerService = {
     timeoutMs: number = 10000,
     requireSuccess = false,
   ): Promise<boolean> {
+    // When the engine itself runs in a container (docker.sock mounted), the
+    // app container publishes ports on the host, not on this container's
+    // loopback — override the probe host for that topology.
+    const host = process.env.DOCKER_HEALTHCHECK_HOST || '127.0.0.1';
     const start = Date.now();
     const interval = 500;
 
     while (Date.now() - start < timeoutMs) {
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/`, {
+        const res = await fetch(`http://${host}:${port}/`, {
           signal: AbortSignal.timeout(1000),
         });
         await res.body?.cancel();
