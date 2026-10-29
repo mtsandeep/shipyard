@@ -279,14 +279,15 @@ BuildWorker.initialize().catch((err) => {
   console.error('[BuildWorker] Failed to initialize:', err);
 });
 
-// Recover managed processes on startup
+// Recover managed processes on startup. Both paths run: pm0 and docker
+// deployments can coexist (activation mode is chosen per deployment, and
+// apps deployed before a USE_DOCKER flip are still pm0-managed).
+PM0Service.recoverProcesses().catch((e) => {
+  console.error('Failed to recover PM0 processes:', e);
+});
 if (USE_DOCKER) {
   DockerService.recoverLogStreams().catch((e) => {
     console.error('Failed to recover Docker log streams:', e);
-  });
-} else {
-  PM0Service.recoverProcesses().catch((e) => {
-    console.error('Failed to recover PM0 processes:', e);
   });
 }
 
