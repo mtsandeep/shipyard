@@ -2,11 +2,18 @@
 
 import { Button } from '@/components/ui/button';
 import { CardShell } from '@/components/ui/card-shell';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { authClient } from '@/lib/auth-client';
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
+import { toast } from 'sonner';
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   const handleGitHubLogin = async () => {
     setLoading(true);
@@ -15,6 +22,23 @@ export default function LoginPage() {
       callbackURL: process.env.NEXT_PUBLIC_SITE_URL!, // Redirect to home after login
     });
     setLoading(false);
+  };
+
+  const handleEmailSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const { error } = isSignUp
+        ? await authClient.signUp.email({ email, password, name })
+        : await authClient.signIn.email({ email, password });
+      if (error) {
+        toast.error(error.message ?? 'Authentication failed');
+        return;
+      }
+      window.location.href = '/';
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -45,6 +69,62 @@ export default function LoginPage() {
             </svg>
             {loading ? 'Connecting...' : 'Continue with GitHub'}
           </Button>
+
+          <div className="flex items-center gap-3" aria-hidden="true">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs text-muted-foreground">or</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <form className="space-y-4" onSubmit={handleEmailSubmit}>
+            {isSignUp && (
+              <div className="space-y-2">
+                <Label htmlFor="name">Name</Label>
+                <Input
+                  id="name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoComplete="name"
+                  required
+                />
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+                  onClick={() => setIsSignUp((v) => !v)}
+                >
+                  {isSignUp ? 'Have an account? Sign in' : 'Need an account? Create one'}
+                </button>
+              </div>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                minLength={8}
+                required
+              />
+            </div>
+            <Button type="submit" className="h-11 w-full" disabled={loading}>
+              {loading ? 'Please wait...' : isSignUp ? 'Create account' : 'Sign in'}
+            </Button>
+          </form>
         </div>
       </CardShell>
     </div>

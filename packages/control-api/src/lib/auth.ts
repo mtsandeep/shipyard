@@ -22,6 +22,11 @@ export const auth = betterAuth({
       verification,
     },
   }),
+  // Local/self-hosted login without a GitHub OAuth app.
+  emailAndPassword: {
+    enabled: true,
+    autoSignIn: true,
+  },
   socialProviders: {
     github: {
       clientId: process.env.GITHUB_CLIENT_ID!,
@@ -29,8 +34,10 @@ export const auth = betterAuth({
     },
   },
   advanced: {
+    // Domain-scoped cookies only make sense on a real multi-subdomain setup;
+    // host-only cookies are what localhost needs (cookies ignore ports).
     crossSubDomainCookies: {
-      enabled: true,
+      enabled: Boolean(authOrigin && !authOrigin.includes('//localhost')),
     },
     ipAddress: {
       ipAddressHeaders: ['x-forwarded-for', 'cf-connecting-ip', 'x-real-ip'],
