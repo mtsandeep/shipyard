@@ -156,21 +156,25 @@ export function ProjectCard({ project }: { project: Project }) {
                     ? project.domain.startsWith('http')
                       ? project.domain
                       : `https://${project.domain}`
-                    : '#'
+                    : project.port
+                      ? `http://localhost:${project.port}`
+                      : '#'
                 }
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => {
-                  if (!project.domain) e.preventDefault();
+                  if (!project.domain && !project.port) e.preventDefault();
                   e.stopPropagation();
                 }}
                 className={cn(
                   'text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 pointer-events-auto truncate max-w-full',
-                  !project.domain && 'cursor-default hover:text-muted-foreground',
+                  !project.domain && !project.port && 'cursor-default hover:text-muted-foreground',
                 )}
               >
-                <span className="truncate">{project.domain || 'Not deployed'}</span>
-                {project.domain && <ExternalLink className="w-3 h-3 opacity-50" />}
+                <span className="truncate">
+                  {project.domain || (project.port ? `localhost:${project.port}` : 'Not deployed')}
+                </span>
+                {(project.domain || project.port) && <ExternalLink className="w-3 h-3 opacity-50" />}
               </a>
             </div>
           </div>
